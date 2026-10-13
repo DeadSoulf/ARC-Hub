@@ -1,0 +1,31 @@
+# Credentials, enrollment and secrets
+.env
+.env.*
+!.env.example
+**/gateway.json
+**/registry.json
+**/agent.json
+**/*credential*.json
+**/*-enroll.json
+**/*-login.json
+**/mcp-token
+*.pem
+*.key
+id_rsa*
+id_ed25519*
+
+# Generated build/runtime state
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+*.log
+*.log.*
+logs/
+dist/
+release/
+*.zip
+*.tar.gz
+.DS_Store
+Thumbs.db

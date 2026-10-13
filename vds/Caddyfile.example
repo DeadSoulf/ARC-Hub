@@ -1,0 +1,11 @@
+# Replace arc.example.com with the DNS hostname pointed at your VDS.
+# Ensure ONLY the reverse proxy is publicly reachable, not port 8877.
+arc.example.com {
+    @arc path /mcp /agent/poll /agent/result
+    handle @arc {
+        reverse_proxy 127.0.0.1:8877
+    }
+    handle {
+        respond "not found" 404
+    }
+}

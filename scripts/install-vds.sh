@@ -43,7 +43,7 @@ while (($#)); do
   esac
 done
 if [[ -z "$DOMAIN" ]]; then
-  if [[ -r /dev/tty ]]; then
+  if [[ -t 2 && -r /dev/tty ]]; then
     printf 'ARC: Enter your HTTPS DNS hostname (e.g. arc.mydomain.com): ' >/dev/tty
     IFS= read -r DOMAIN </dev/tty || fail "could not read hostname"
     DOMAIN="${DOMAIN,,}"

@@ -23,7 +23,8 @@ if [[ ! -f /etc/arc/registry.json ]]; then
 fi
 systemctl daemon-reload
 systemctl enable --now arc-hub
-systemctl --no-pager status arc-hub | head -25
+systemctl is-active --quiet arc-hub || { systemctl --no-pager status arc-hub; exit 1; }
+systemctl --no-pager --full status arc-hub | sed -n '1,25p'
 echo 'ARC_HUB_INSTALLED localhost:8877'
 echo 'NEXT: configure public HTTPS domain in Caddy/Nginx with ACME certificate.'
 echo 'Owner credential file: /etc/arc/owner-credentials.json (DO NOT SHARE)'

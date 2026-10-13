@@ -1,72 +1,155 @@
-# ARC Hub 0.2 — Linux VDS
+# ARC Hub 0.2 — установка на Debian VDS
 
-**Status:** multi-user prototype, tested locally on Asus. Not yet deployed on an external VDS.
+**Состояние:** прототип. Исходники готовы, но развёртывание на конкретном VDS
+ещё нужно проверить. Совместный вход в ChatGPT потребует OAuth/OIDC.
 
-## Install on Debian (once VDS address/SSH access is configured)
+## Что требуется
 
-1. Upload ARC-Hub-v0.2.tar.gz over authenticated SSH/SFTP; verify SHA-256.
-2. `tar -xzf ARC-Hub-v0.2.tar.gz`, change to extracted vds directory.
-3. Install required OS Python3, then `sudo bash install-vds.sh`.
-4. Point a DNS hostname at the VDS and install Caddy/Nginx with HTTPS certificates.
-5. Configure Caddyfile.example with the *actual* hostname and reload Caddy.
-6. Allow inbound TCP 443 only for the proxy; **do not expose 8877**.
-7. Verify `curl http://127.0.0.1:8877/healthz` on VDS.
+- Чистый **Debian 12 или 13** с доступом SSH и правами `sudo`;
+- публичный IPv4/IPv6 вашего VDS;
+- собственный домен, например `arc.mydomain.com`, с DNS-записью A (или AAAA), ведущей на VDS;
+- открытые во внешнем брандмауэре VDS TCP **80 и 443**, а также ваш порт SSH;
+- доступ с VDS к GitHub и репозиториям пакетов Debian.
 
-ARC Hub requires a Linux VDS with root or sudo (setup only), DNS host,
-outbound HTTPS from Windows devices to the VDS, and a TLS proxy. No ports
-need to be opened toward Windows devices.
+**Никаких токенов, SSH-ключей и паролей в GitHub или ChatGPT не отправлять.**
 
-## Administrators / users
+## Установка одной командой
 
-Registry and private credentials are under /etc/arc (mode 0700).
-The local CLI below must run as the arc-hub service user through sudo:
+Подключитесь к VDS по SSH и выполните **одну команду**:
 
-    sudo -u arc-hub python3 /opt/arc/arc_admin.py --config /etc/arc/registry.json add-user alice --role viewer --credentials /etc/arc/alice-login.json
+```bash
+curl -fsSL https://raw.githubusercontent.com/DeadSoulf/ARC-Hub/main/scripts/install-vds.sh | sudo bash
+```
 
-For every user, generate separate credentials and grant *specific* devices
-and scopes. The token is stored only in owner-readable credentials file,
-not printed in console or distributed inside agent installer.
+Введите свой домен, когда установщик спросит:
 
-    sudo -u arc-hub python3 /opt/arc/arc_admin.py --config /etc/arc/registry.json add-device PC02 --name Office --gateway-url https://arc.example.com --enrollment /etc/arc/PC02-enroll.json --scopes status,inspect,files.read
+```text
+ARC: Enter your HTTPS DNS hostname (e.g. arc.mydomain.com):
+```
 
-    sudo -u arc-hub python3 /opt/arc/arc_admin.py --config /etc/arc/registry.json grant alice PC02 --scopes status
+Если хотите без дополнительного вопроса, передайте домен в той же команде:
 
-Service restart is required to reload changes:
+```bash
+curl -fsSL https://raw.githubusercontent.com/DeadSoulf/ARC-Hub/main/scripts/install-vds.sh | sudo bash -s -- --domain arc.mydomain.com
+```
 
-    sudo systemctl restart arc-hub
+**Вместо `arc.mydomain.com` используйте ваш настоящий домен.** Адрес
+`arc.example.com` — лишь пример, скрипт намеренно его отклоняет.
 
-The enrollment file is secret; provision it securely to the correct
-Windows computer and erase the transfer copy. Rotate compromised keys.
+> Это запуск открытого кода с правами root. Перед установкой проверьте
+> [исходник скрипта](../scripts/install-vds.sh) и изменения репозитория.
+> Для особенно чувствительной инфраструктуры предпочтительна загрузка
+> проверенной версии/коммита с предварительной проверкой хеша.
 
-**Role ceilings:** viewer=status, operator=non-shell controls only with
-explicit grants, admin=all scopes but still limited by per-device grants.
-The gateway **never** selects a default PC; every action requires device_id.
-All tools including mutating tools are disabled until permissions have
-been granted to user AND enabled for the device AND locally enabled on PC.
+### Что делает команда
 
-Before modifying a computer or controlling its keyboard/mouse, call
-`arc_take_control(device_id)` to acquire a 90-second exclusive lease.
-The lease is renewed by authorized mutating operations. Other operators
-can read in parallel but cannot write or control the same device while
-another user owns the lease. Call `arc_release_control(device_id)` when done.
-The ARC Hub MCP tool name list is: arc_devices, arc_permissions,
-arc_take_control, arc_release_control, arc_call.
+1. Проверяет Debian 12/13 и формат домена.
+2. Устанавливает `python3`, `git`, `curl`, `ca-certificates`, `caddy`.
+3. Скачивает ARC Hub из публичного GitHub `DeadSoulf/ARC-Hub`.
+4. Создаёт непривилегированного системного пользователя `arc-hub`.
+5. Размещает код в `/opt/arc`, конфигурацию и приватные ключи в `/etc/arc`.
+6. Создаёт и включает `arc-hub.service` с автоматическим перезапуском.
+7. Проверяет локальный HTTP API на `127.0.0.1:8877/healthz`.
+8. Настраивает Caddy для HTTPS и проксирования `/mcp`, `/agent/poll`, `/agent/result`.
+9. Проверяет конфигурацию Caddy, включает её и выводит адрес сервера.
 
-## ChatGPT authentication caveat
+**Порт 8877 остаётся закрытым для интернета**: ARC Hub слушает только
+`127.0.0.1`. Не настраивайте внешний проброс на 8877. В Windows
+входящие порты тоже открывать не нужно — ARC Agent подключается исходящим HTTPS.
 
-This version authenticates each user with a distinct bearer token.
-For a shared ChatGPT plugin that supports separate sign-in for different
-people, implement OAuth 2.1/OIDC identity with token validation on each
-MCP request (a single shared API token is NOT sufficient). Do not enable
-a shared plugin with one administrator token.
+Установщик **не перезаписывает чужую рабочую конфигурацию Caddy**: если
+он видит существующий пользовательский Caddyfile, останавливается с ошибкой.
+Исходная конфигурация при разрешённой замене сохраняется в резервной копии.
 
-The current Asus Secure MCP Tunnel remains active on the *old*
-local server and is not connected automatically to the new ARC Hub.
-You can test the Hub with direct HTTPS URL + individual API key during
-private development. OAuth is needed before team-wide plugin rollout.
+Установщик не настраивает правила брандмауэра VDS. Откройте порты 80/443
+в панели провайдера и/или действующем firewall, не закрывая свой SSH.
 
-## Auditing
+## Проверка после установки
 
-/var/log/arc/audit.jsonl logs user, device, tool, outcome and timestamp
-without tool arguments or results. Keep audit logs private and implement
-centralized logging/alerting for a production environment.
+```bash
+sudo systemctl status arc-hub --no-pager
+sudo systemctl status caddy --no-pager
+curl -fsS http://127.0.0.1:8877/healthz
+curl -i -X POST https://arc.mydomain.com/mcp
+```
+
+Ожидаемый локальный JSON: `{"status":"ok","service":"arc-hub"}`.
+При запросе внешнего `/mcp` без ключа ожидается **401 Unauthorized**.
+Если DNS не направлен на VDS или порт 443 закрыт, TLS ещё не заработает;
+соответственно, проверка HTTPS завершится ошибкой, даже если службы запущены.
+
+Журналы:
+
+```bash
+sudo journalctl -u arc-hub -n 100 --no-pager
+sudo journalctl -u caddy -n 100 --no-pager
+sudo ss -lntp | grep 8877
+```
+
+Адрес в `ss` должен быть `127.0.0.1:8877`, а не `0.0.0.0:8877`.
+
+## Пользователи и устройства
+
+Первоначальный пользователь `owner` создаётся автоматически.
+**Его секретный ключ хранится только на VDS**, в
+`/etc/arc/owner-credentials.json` с ограниченными правами доступа.
+Не размещайте его в .env репозитория, GitHub Issues или сообщениях ChatGPT.
+
+Создаём отдельного пользователя:
+
+```bash
+sudo -u arc-hub python3 /opt/arc/arc_admin.py \
+  --config /etc/arc/registry.json \
+  add-user operator1 --role viewer \
+  --credentials /etc/arc/operator1-login.json
+```
+
+Чтобы зарегистрировать Asus или другую машину, сначала узнайте её
+`device_id` из локального `%LOCALAPPDATA%\ARC\agent.json` (Windows).
+Пример (подставьте настоящий идентификатор и домен):
+
+```bash
+sudo -u arc-hub python3 /opt/arc/arc_admin.py \
+  --config /etc/arc/registry.json \
+  add-device ASUS_DEVICE_ID --name Asus \
+  --gateway-url https://arc.mydomain.com \
+  --enrollment /etc/arc/asus-enroll.json \
+  --scopes status,inspect
+
+sudo -u arc-hub python3 /opt/arc/arc_admin.py \
+  --config /etc/arc/registry.json \
+  grant operator1 ASUS_DEVICE_ID --scopes status
+
+sudo systemctl restart arc-hub
+```
+
+Временный `asus-enroll.json` содержит секрет устройства. Переносите
+его на соответствующий Windows-компьютер по доверенному каналу и примените
+скриптом `windows/enroll.ps1` после установки ARC Agent. Удалите
+временные копии после регистрации; исходный реестр VDS сохраните.
+
+Важное ограничение: пользователи `viewer`, `operator`, `admin`
+имеют разные потолки полномочий. Даже администратору операции доступны
+только для явно разрешённого устройства. Мышь, клавиатура и изменения
+требуют эксклюзивного 90-секундного сеанса
+`arc_take_control(device_id)`; завершайте его вызовом
+`arc_release_control(device_id)`.
+
+## Повторный запуск / обновления
+
+Повторный запуск команды из GitHub переустанавливает код и обновляет
+ARC-управляемую конфигурацию Caddy, **не удаляя** существующий реестр
+пользователей и устройств. Перед обновлением сохраните защищённую копию
+`/etc/arc` и журналов. Для критической инфраструктуры используйте
+зафиксированный Git ref и предварительное тестирование, а не случайный HEAD main.
+
+Не удаляйте первоначальный туннель Asus до подтверждения работы
+новой VDS-системы.
+
+## Ограничения по ChatGPT
+
+ARC Hub сейчас поддерживает индивидуальные Bearer-токены.
+**Единый плагин ChatGPT для нескольких пользователей с собственным входом
+потребует отдельной реализации OAuth/OIDC**, включая проверку токенов
+и отзыв доступа. Нельзя подключать всех пользователей с одним owner-токеном.
+Общий плагин пока является шаблоном, не готовой продукционной интеграцией.

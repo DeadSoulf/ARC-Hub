@@ -21,3 +21,8 @@ jobs:
         run: python -m unittest discover -s tests -p "test_*.py" -v
       - name: Compile Hub sources
         run: python -m py_compile vds/arc_hub.py vds/arc_admin.py
+      - name: Check VDS bootstrap bash syntax
+        run: |
+          bash -n scripts/install-vds.sh
+          bash -n vds/install-vds.sh
+          bash scripts/install-vds.sh --help | grep -q "ARC Hub quick installer"

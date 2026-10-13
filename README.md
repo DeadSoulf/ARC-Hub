@@ -29,6 +29,22 @@ python3 -m unittest discover -s tests -p 'test_*.py' -v
 python3 -m py_compile vds/arc_hub.py vds/arc_admin.py
 ```
 
+## One-command VDS installation (Debian 12/13)
+
+On a new VDS, connect using SSH and run:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/DeadSoulf/ARC-Hub/main/scripts/install-vds.sh | sudo bash
+```
+
+Enter the **real DNS hostname** pointing at your VDS when prompted. The script installs the systemd service, sets up Caddy HTTPS, and checks localhost health. DNS must point at the VDS; inbound ports 80/443 must be allowed by the provider. A more explicit non-interactive variant is:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/DeadSoulf/ARC-Hub/main/scripts/install-vds.sh | sudo bash -s -- --domain arc.yourdomain.com
+```
+
+**Review [the installer source](scripts/install-vds.sh) before running remote code as root.** Do not publish your owner credentials. The installer does **not** implement multi-user OAuth for ChatGPT; see the [full VDS guide](vds/README.md).
+
 ## Installation
 
 Follow the [VDS installation guide](vds/README.md) and [Windows agent guide](windows/README.md).

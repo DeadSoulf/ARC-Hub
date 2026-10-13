@@ -1,0 +1,29 @@
+[Unit]
+Description=ARC Hub (multi-user MCP gateway)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=arc-hub
+Group=arc-hub
+WorkingDirectory=/opt/arc
+ExecStart=/usr/bin/python3 -B /opt/arc/arc_hub.py --config /etc/arc/registry.json --bind 127.0.0.1 --port 8877 --audit /var/log/arc/audit.jsonl
+Restart=always
+RestartSec=5
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+CapabilityBoundingSet=
+ReadWritePaths=/var/log/arc
+MemoryMax=256M
+
+[Install]
+WantedBy=multi-user.target

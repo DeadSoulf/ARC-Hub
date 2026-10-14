@@ -263,7 +263,7 @@ class OAuth:
                 or scope not in (None, "", SCOPE)
                 or not isinstance(state, str) or len(state) > 512):
             return self._error(handler, 400, "invalid_authorization_request")
-        with self.lock:
+        with self.lock, self.db:
             self._cleanup()
             if len(self.flows) >= 256:
                 return self._error(handler, 429, "too_many_pending_flows")

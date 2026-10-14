@@ -20,8 +20,14 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.13'
-      - name: Check deployment shell syntax
-        run: bash -n scripts/install-vds.sh scripts/update-web.sh vds/install-vds.sh
+      - name: Check deployment shell syntax and recovery usage
+        run: |
+          for script in scripts/install-vds.sh scripts/update-web.sh scripts/repair-oauth.sh vds/install-vds.sh; do
+            bash -n "$script"
+          done
+          bash scripts/repair-oauth.sh --help | grep -q "Usage:"
+          # Do not run actual installation in CI. The tested script aborts
+          # unless it is explicitly invoked as root on the ARC Debian host.
       - name: Check Web JavaScript syntax
         run: node --check vds/web/app.js
       - name: Compile ARC Hub Python

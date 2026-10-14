@@ -268,6 +268,7 @@ class OAuthTests(unittest.TestCase):
                 "task_id": task["task_id"],
                 "result": {"launched": "notepad", "source": "fake-agent"}}))
 
+        self.hub.seen["asus"] = time.time()
         worker = threading.Thread(target=fake_agent, daemon=True)
         worker.start()
         opened = invoke("arc_call", action)

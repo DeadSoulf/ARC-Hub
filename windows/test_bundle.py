@@ -79,6 +79,17 @@ class BundleEnrollmentTests(unittest.TestCase):
         self.assertEqual(config["device_token"], "k"*64)
         self.assertEqual(config["permissions"], self.initial["permissions"])
 
+    def test_clipboard_paste_formats_pairing_code(self):
+        self.assertEqual(
+            arc_bundle.normalize_pasted_pair_code(" 3qbv-ml86-ehch\n"),
+            "3QBV-ML86-EHCH"
+        )
+        for invalid in ("", "some unrelated clipboard text",
+                        "3QBV-ML86-????", "3QBVML86EHCI"):
+            with self.subTest(invalid=invalid):
+                with self.assertRaises(ValueError):
+                    arc_bundle.normalize_pasted_pair_code(invalid)
+
     def test_pair_rejects_http_and_existing_enrollment(self):
         with self.assertRaises(ValueError):
             arc_bundle.enroll_by_code("http://vpn.homeaicore.ru", "ABCD-EFGH-JKLM")

@@ -51,11 +51,21 @@ set +e
 done
 code="${PIPESTATUS[0]}"
 set -e
+# On failure keep the last finite stage, so administrators know which
+# operation failed without exposing unrestricted privileged log contents.
+last_stage="failed"
+if [[ -f "$DIR/status.json" ]]; then
+  last_stage="$(sed -n 's/.*"step":"\([a-z]*\)".*/\1/p' "$DIR/status.json" | head -n 1)"
+  case "$last_stage" in
+    prepare|download|test|backup|install|restart|health|service|rollback|complete) ;;
+    *) last_stage="failed" ;;
+  esac
+fi
 if [[ "$code" -eq 0 ]]; then
   status success complete 100 "ARC Hub обновлён; проверка работоспособности пройдена"
   echo "ARC_UPDATE_SUCCESS"
 else
-  status failed failed 100 "Обновление завершилось с ошибкой; выполнена попытка отката. Подробности в защищённом журнале VDS."
+  status failed "$last_stage" 100 "Ошибка обновления; попробовали восстановить предыдущую версию. Этап: $last_stage. Подробности в журнале VDS."
   echo "ARC_UPDATE_FAILED exit=$code" >&2
   exit "$code"
 fi

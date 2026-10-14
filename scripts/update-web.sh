@@ -127,6 +127,9 @@ install -m 0755 "$TEMP/repo/scripts/update-web.sh" /usr/local/libexec/arc-update
 mv -f /usr/local/libexec/arc-update-apply.new /usr/local/libexec/arc-update-apply
 install -m 0644 "$TEMP/repo/vds/arc-update.path" "$TEMP/repo/vds/arc-update.service" /etc/systemd/system/
 install -m 0644 "$TEMP/repo/vds/arc-hub.service" /etc/systemd/system/
+# Keep state directory owned by the non-privileged Hub process.
+chown arc-hub:arc-hub /etc/arc
+chmod 0700 /etc/arc
 ( cd "$TEMP/repo" && git rev-parse --short=12 HEAD ) > /opt/arc/REVISION
 systemctl daemon-reload
 # Reload ARC Hub once more so the new systemd sandbox ReadWritePaths

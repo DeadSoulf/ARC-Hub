@@ -173,6 +173,39 @@ class WebTests(unittest.TestCase):
         # Queue data is a marker only: no shell command or URL can be passed.
         self.assertNotIn("curl", (location / "request").read_text())
 
+    def test_structured_update_progress_and_owner_isolation(self):
+        location = Path(self.temp.name) / "update-queue"
+        location.mkdir()
+        self.server.web.update_dir = location
+        owner, _ = self.login()
+        bob, _ = self.login("bob")
+        sample = {
+            "state": "running", "step": "test", "percent": 30,
+            "detail": "Автоматические тесты",
+            "started_unix": 1791958000, "updated_unix": int(__import__("time").time()),
+        }
+        (location / "status.json").write_text(json.dumps(sample), encoding="utf-8")
+        status, _, result = self.request("/web/api/server", cookie=owner)
+        self.assertEqual(status, 200)
+        self.assertEqual(result["percent"], 30)
+        self.assertEqual(result["step"], "test")
+        self.assertEqual(result["started_unix"], sample["started_unix"])
+        status, _, _ = self.request("/web/api/server", cookie=bob)
+        self.assertEqual(status, 403)
+        (location / "status.json").write_text(json.dumps({
+            **sample, "percent": 100000, "detail": "x" * 600
+        }), encoding="utf-8")
+        status, _, result = self.request("/web/api/server", cookie=owner)
+        self.assertEqual(status, 200)
+        self.assertEqual(result["percent"], 100)
+        self.assertLessEqual(len(result["detail"]), 240)
+        (location / "status.json").write_text(json.dumps({
+            **sample, "updated_unix": int(__import__("time").time()) - 1000
+        }), encoding="utf-8")
+        status, _, result = self.request("/web/api/server", cookie=owner)
+        self.assertEqual(result["state"], "failed")
+        self.assertEqual(result["step"], "failed")
+
     def test_logout_and_owner_protection(self):
         cookie, csrf = self.login()
         status, _, _ = self.request("/web/api/users/enabled", {

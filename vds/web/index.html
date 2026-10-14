@@ -45,7 +45,13 @@
 
     <main class="content">
       <header class="topbar"><div><p class="overline">УПРАВЛЕНИЕ УСТРОЙСТВАМИ</p><h1 id="pageTitle">Обзор</h1></div><div class="top-actions"><span class="live"><i></i> Защищённая сессия</span><a id="downloadClient" class="ghost nav-link" href="https://github.com/DeadSoulf/ARC-Hub/releases/download/v0.3.0-preview/ARC-Agent-Setup.exe" target="_blank" rel="noopener noreferrer">↓ Скачать клиент .exe</a><button id="updateServer" class="ghost" hidden>↑ Обновить сервер</button><button id="refresh" class="ghost">↻ Обновить</button></div></header>
-      <div id="toast" class="toast" role="status" aria-live="polite" hidden></div><div id="serverUpdateState" class="tip" hidden></div>
+      <div id="toast" class="toast" role="status" aria-live="polite" hidden></div><section id="serverUpdateProgress" class="update-progress" hidden role="status" aria-live="polite">
+        <div class="update-top"><div><p class="overline">ОБНОВЛЕНИЕ ARC HUB</p><h2 id="serverUpdateTitle">Проверка обновления</h2></div><strong id="serverUpdatePercent">0%</strong></div>
+        <progress id="serverUpdateBar" max="100" value="0" aria-label="Ход обновления ARC Hub"></progress>
+        <div class="update-status-row"><span id="serverUpdateState">Ожидание…</span><time id="serverUpdateTime"></time></div>
+        <ol id="serverUpdateStages" class="update-stages"></ol>
+        <p class="update-help" id="serverUpdateHelp">Статус обновляется автоматически. Во время перезапуска сервера может потребоваться повторный вход.</p>
+      </section>
 
       <section id="overview" class="page">
         <div class="stats">

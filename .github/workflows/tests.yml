@@ -36,4 +36,5 @@ jobs:
         run: |
           bash -n scripts/update-web.sh
           bash -n vds/arc-update-runner.sh
+          bash -n vds/arc-update-runner.sh
           python -m py_compile vds/arc_web.py windows/arc_bundle.py windows/arc_supervisor.py

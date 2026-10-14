@@ -302,8 +302,15 @@ class Handler(BaseHTTPRequestHandler):
         if not hdr.startswith("Bearer "):
             return None
         raw = hdr[7:]
-        return (self.server.hub.authenticate_user(raw) or
-                (self.server.oauth.authenticate(raw) if self.server.oauth else None))
+        if self.server.oauth:
+            principal = self.server.oauth.authenticate(raw)
+            if principal is not None:
+                return principal
+            # Old long-lived user bearer credentials must not bypass OAuth
+            # once public OAuth is enabled. Explicit migration override only.
+            if os.environ.get("ARC_OAUTH_ALLOW_LEGACY_BEARER") != "1":
+                return None
+        return self.server.hub.authenticate_user(raw)
 
     def device_id(self):
         return parse_qs(urlsplit(self.path).query).get("device_id", [""])[0]
@@ -366,16 +373,28 @@ class Handler(BaseHTTPRequestHandler):
         if path != "/mcp":
             return self.send_obj(404, {"error": "not found"})
         principal = self.bearer_user()
-        if principal is None:
-            challenge = ([("WWW-Authenticate", self.server.oauth.challenge())]
-                         if self.server.oauth else [])
-            return self.send_obj(401, {"error": "unauthorized"}, challenge)
+        if principal is None and self.server.oauth is None:
+            return self.send_obj(401, {"error": "unauthorized"})
         try:
             payload = self.json_body()
             if not isinstance(payload, dict) or payload.get("jsonrpc") != "2.0":
                 raise ValueError("JSON-RPC 2.0 required")
             method = payload.get("method")
             ident = payload.get("id")
+            # ChatGPT discovers tools before OAuth. Only harmless discovery
+            # methods may be used anonymously; device actions NEVER may.
+            if principal is None and method not in (
+                    "initialize", "ping", "tools/list", "notifications/initialized"):
+                challenge = self.server.oauth.challenge()
+                if method == "tools/call":
+                    challenge = challenge[:-1] + (
+                        ', error="invalid_token", error_description="Sign in to ARC Hub"')
+                    return self.send_obj(200, {"jsonrpc": "2.0", "id": ident,
+                        "result": {"isError": True,
+                                   "content": [{"type": "text", "text": "ARC authorization required"}],
+                                   "_meta": {"mcp/www_authenticate": [challenge]}}})
+                return self.send_obj(401, {"error": "unauthorized"},
+                                     [("WWW-Authenticate", challenge)])
             if method == "notifications/initialized":
                 return self.send_obj(202)
             if method == "initialize":

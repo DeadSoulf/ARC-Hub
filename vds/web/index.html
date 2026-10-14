@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0b1220">
+  <title>ARC — Control Center</title>
+  <link rel="stylesheet" href="/web/app.css">
+  <script src="/web/app.js" defer></script>
+</head>
+<body>
+  <div class="auth-screen" id="auth">
+    <div class="auth-card">
+      <div class="logo-hero"><span class="logo">A<span class="accent">R</span>C</span><span class="smallchip">Hub 0.2</span></div>
+      <h1>Центр управления</h1>
+      <p class="muted">Войдите под своей учётной записью ARC. Каждому пользователю доступны только выданные ему устройства.</p>
+      <form id="loginForm">
+        <label for="loginUser">Пользователь</label>
+        <input id="loginUser" name="user" required autocomplete="username" placeholder="owner">
+        <label for="loginToken">Персональный токен ARC</label>
+        <input id="loginToken" name="token" type="password" required autocomplete="off" placeholder="Токен из приватного файла учётной записи">
+        <button class="primary wide" type="submit">Войти <span aria-hidden="true">→</span></button>
+      </form>
+      <p class="auth-note">Секрет хранится в защищённой cookie-сессии только на сервере, не в браузерном хранилище. Токен администратора находится в <code>/etc/arc/owner-credentials.json</code> на VDS.</p>
+      <p class="error" id="loginError" role="alert"></p>
+    </div>
+  </div>
+
+  <div class="layout" id="app" hidden>
+    <aside class="sidebar">
+      <div class="brand"><div class="brand-symbol">A</div><div><b>ARC</b><small>CONTROL CENTER</small></div></div>
+      <p class="overline">РАБОЧЕЕ ПРОСТРАНСТВО</p>
+      <nav class="nav" aria-label="Разделы">
+        <button class="nav-item active" data-page="overview"><span>▦</span> Обзор</button>
+        <button class="nav-item" data-page="devices"><span>▣</span> Компьютеры</button>
+        <button class="nav-item admin-nav" data-page="users" hidden><span>♙</span> Пользователи</button>
+        <button class="nav-item admin-nav" data-page="audit" hidden><span>≡</span> Журнал действий</button>
+      </nav>
+      <div class="sidebar-foot">
+        <div class="system-status"><i></i> ARC Hub подключён</div>
+        <div class="user-block"><div class="avatar" id="avatar">?</div><div><b id="currentUser">—</b><small id="currentRole">—</small></div></div>
+        <button class="muted-button" id="logout">Выйти из панели ↗</button>
+      </div>
+    </aside>
+
+    <main class="content">
+      <header class="topbar"><div><p class="overline">УПРАВЛЕНИЕ УСТРОЙСТВАМИ</p><h1 id="pageTitle">Обзор</h1></div><div class="top-actions"><span class="live"><i></i> Защищённая сессия</span><button id="refresh" class="ghost">↻ Обновить</button></div></header>
+      <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+
+      <section id="overview" class="page">
+        <div class="stats">
+          <div class="stat"><span>Всего доступно ПК</span><strong id="totalDevices">0</strong><small>Выданные вам компьютеры</small></div>
+          <div class="stat"><span>Сейчас в сети</span><strong id="onlineDevices">0</strong><small>Последняя активность агента</small></div>
+          <div class="stat"><span>Управление занято</span><strong id="busyDevices">0</strong><small>Активные эксклюзивные сеансы</small></div>
+        </div>
+        <div class="panel"><div class="panel-heading"><div><h2>Ваши устройства</h2><p class="muted">Выберите компьютер для диагностики и управления</p></div><button class="subtle" id="overviewOpenDevices">Открыть список →</button></div><div class="device-grid" id="overviewDevices"></div></div>
+        <div class="tip">Для удалённых действий пользователь должен иметь соответствующее разрешение в ARC Hub, а владелец компьютера — включить возможность в ARC Agent. Изменения и управление вводом требуют эксклюзивного сеанса.</div>
+      </section>
+
+      <section id="devices" class="page" hidden>
+        <div class="workspace">
+          <div class="panel machine-list"><div class="panel-heading"><h2>Компьютеры</h2><span class="pill" id="listCount">0</span></div><div id="deviceList" class="device-list"></div></div>
+          <div class="panel machine-detail">
+            <div class="machine-head"><div><p class="overline">ВЫБРАННОЕ УСТРОЙСТВО</p><h2 id="selectedName">Выберите компьютер</h2><p class="muted mono" id="selectedId"></p></div><span class="pill" id="selectedState">—</span></div>
+            <div class="scope-line" id="scopeList"></div>
+            <div class="action-bar">
+              <button id="takeControl" class="primary">Получить управление</button>
+              <button id="releaseControl" class="ghost">Освободить</button>
+            </div>
+            <div class="tabs">
+              <button data-tab="diagnostics" class="tab selected">Диагностика</button>
+              <button data-tab="files" class="tab">Файлы</button>
+              <button data-tab="screen" class="tab">Экран</button>
+              <button data-tab="terminal" class="tab">PowerShell</button>
+            </div>
+            <div class="tab-panel" id="diagnostics">
+              <div class="mini-actions"><button data-tool="computer_status" class="subtle">Система</button><button data-tool="list_processes" class="subtle">Процессы</button><button data-tool="list_windows" class="subtle">Окна</button></div>
+              <pre class="results" id="diagnosticOutput">Выберите действие, чтобы получить информацию с компьютера.</pre>
+            </div>
+            <div class="tab-panel" id="files" hidden>
+              <p class="muted">Просмотр разрешённых каталогов и чтение текстовых файлов. Права задаются на каждом устройстве.</p>
+              <label for="filePath">Путь на Windows-компьютере</label>
+              <div class="inline-form"><input id="filePath" placeholder="D:\AI"><button id="listFiles" class="subtle">Список</button><button id="readFile" class="subtle">Прочитать</button></div>
+              <pre class="results" id="fileOutput">Содержимое появится здесь.</pre>
+            </div>
+            <div class="tab-panel" id="screen" hidden>
+              <p class="muted">Снимок экрана по запросу. Щелчок по изображению управляет мышью только при наличии разрешений и эксклюзивного сеанса.</p>
+              <button class="subtle" id="captureScreen">Обновить снимок</button>
+              <div class="screen-box"><img id="remoteScreen" alt="Экран удалённого устройства" hidden><span id="screenPlaceholder">Нет снимка экрана</span></div>
+              <label for="typedText">Отправить текст на удалённый компьютер</label>
+              <div class="inline-form"><input id="typedText" maxlength="300" placeholder="Текст для ввода"><button id="sendText" class="subtle">Ввести</button></div>
+            </div>
+            <div class="tab-panel" id="terminal" hidden>
+              <p class="warning-text">Команды PowerShell выполняются на удалённом ПК от имени пользователя агента. Доступно только администраторам с разрешением <code>shell.exec</code> и активным сеансом управления.</p>
+              <label for="shellCommand">Команда PowerShell</label>
+              <textarea id="shellCommand" rows="4" spellcheck="false" placeholder="Get-Process | Select-Object -First 10"></textarea>
+              <button id="runShell" class="danger-outline">Подтвердить и выполнить команду</button>
+              <pre class="results" id="shellOutput">Результат появится здесь.</pre>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="users" class="page" hidden>
+        <div class="panel"><div class="panel-heading"><div><h2>Пользователи и роли</h2><p class="muted">Доступы выдаются для конкретных устройств, без общих ключей.</p></div></div>
+          <div class="table-scroll"><table><thead><tr><th>Имя</th><th>Роль</th><th>Статус</th><th>Устройств</th><th>Действия</th></tr></thead><tbody id="usersTable"></tbody></table></div>
+        </div>
+        <div class="two-panels">
+          <form class="panel form-panel" id="createUserForm">
+            <h2>Добавить пользователя</h2><p class="muted">Персональный токен будет показан только один раз.</p>
+            <label for="newUsername">Имя</label><input id="newUsername" required pattern="[A-Za-z0-9_-]{2,64}" placeholder="operator1">
+            <label for="newRole">Роль</label><select id="newRole"><option value="viewer">Viewer — только статус</option><option value="operator">Operator — чтение и управление</option><option value="admin">Admin — все разрешённые действия</option></select>
+            <button class="primary" type="submit">Создать пользователя</button>
+            <div id="credentialOutput" class="credential" hidden><b>Сохраните токен сейчас</b><code id="credentialToken"></code><button type="button" class="subtle" id="copyCredential">Скопировать токен</button><p>После закрытия токен не получится посмотреть повторно.</p></div>
+          </form>
+          <form class="panel form-panel" id="grantForm">
+            <h2>Права доступа</h2><p class="muted">Укажите пользователя и устройство, затем разрешённые операции.</p>
+            <label for="grantUser">Пользователь</label><select id="grantUser"></select>
+            <label for="grantDevice">Компьютер</label><select id="grantDevice"></select>
+            <div id="grantScopes" class="checks"></div>
+            <button class="primary" type="submit">Сохранить разрешения</button>
+          </form>
+        </div>
+      </section>
+
+      <section id="audit" class="page" hidden>
+        <div class="panel"><div class="panel-heading"><div><h2>Журнал безопасности</h2><p class="muted">Последние 80 записей. Команды и содержимое файлов не сохраняются в журнале.</p></div><button id="refreshAudit" class="subtle">↻ Обновить</button></div><div class="table-scroll"><table><thead><tr><th>Время (UTC)</th><th>Пользователь</th><th>Устройство</th><th>Операция</th><th>Итог</th></tr></thead><tbody id="auditTable"></tbody></table></div></div>
+      </section>
+    </main>
+  </div>
+</body>
+</html>

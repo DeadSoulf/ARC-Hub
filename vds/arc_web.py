@@ -1,0 +1,357 @@
+"""ARC Web: authenticated browser console for ARC Hub.
+
+No external dependencies, no privileged filesystem access from the browser.
+Browser sessions are server-side, short-lived and bound to the token hash.
+"""
+from __future__ import annotations
+
+from collections import defaultdict, deque
+from http.cookies import SimpleCookie
+import hmac
+import json
+import os
+from pathlib import Path
+import re
+import secrets
+import tempfile
+import threading
+import time
+import hashlib
+from urllib.parse import urlsplit
+
+WEB_ROOT = Path(__file__).with_name("web")
+SESSION_TTL = 8 * 60 * 60
+USER_NAME = re.compile(r"^[A-Za-z0-9_-]{2,64}$")
+ALLOWED_ROLES = {"viewer", "operator", "admin"}
+ROLE_SCOPES = {
+    "viewer": {"status"},
+    "operator": {"status", "inspect", "files.read", "screen.read", "apps.launch", "input.control"},
+    "admin": {"status", "inspect", "files.read", "screen.read", "apps.launch", "input.control", "files.write", "shell.exec"}
+}
+
+def _hash(value):
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+class WebState:
+    def __init__(self, hub, config_path=None):
+        self.hub = hub
+        self.config_path = Path(config_path) if config_path else None
+        self.sessions = {}
+        self.failures = defaultdict(deque)
+        self.lock = threading.RLock()
+
+    def login(self, name, credential):
+        if not isinstance(name, str) or not isinstance(credential, str) or (
+                not USER_NAME.fullmatch(name) or not 40 <= len(credential) <= 512):
+            return None
+        with self.lock:
+            now = time.monotonic()
+            attempts = self.failures[name]
+            while attempts and now - attempts[0] > 300:
+                attempts.popleft()
+            if len(attempts) >= 8:
+                return None
+            user = self.hub.users.get(name)
+            actual = user.get("token_hash", "") if user and user.get("enabled", True) else ""
+            if not hmac.compare_digest(_hash(credential), actual):
+                attempts.append(now)
+                return None
+            attempts.clear()
+            sid = secrets.token_urlsafe(48)
+            csrf = secrets.token_urlsafe(32)
+            if len(self.sessions) >= 4096:
+                self.sessions = {
+                    key: val for key, val in self.sessions.items()
+                    if val["expiry"] > now
+                }
+            self.sessions[_hash(sid)] = {
+                "user": name, "credential_hash": actual,
+                "expiry": now + SESSION_TTL, "csrf": csrf
+            }
+            return sid, csrf
+
+    def get_session(self, cookie_header):
+        try:
+            parsed = SimpleCookie()
+            parsed.load((cookie_header or "")[:4096])
+            cookie = parsed.get("arc_session")
+            sid = cookie.value if cookie else ""
+            if not sid or len(sid) > 256:
+                return None
+            with self.lock:
+                key = _hash(sid)
+                entry = self.sessions.get(key)
+                if not entry:
+                    return None
+                account = self.hub.users.get(entry["user"])
+                if entry["expiry"] <= time.monotonic() or not account or not account.get("enabled", True) or (
+                        account.get("token_hash") != entry["credential_hash"]):
+                    self.sessions.pop(key, None)
+                    return None
+                return dict(entry)
+        except Exception:
+            return None
+
+    def logout(self, cookie_header):
+        parsed = SimpleCookie()
+        try:
+            parsed.load((cookie_header or "")[:4096])
+            cookie = parsed.get("arc_session")
+            if cookie:
+                with self.lock:
+                    self.sessions.pop(_hash(cookie.value), None)
+        except Exception:
+            pass
+
+    def is_admin(self, name):
+        return self.hub.users.get(name, {}).get("role") == "admin"
+
+    def list_users(self):
+        return [{"username": name, "role": data["role"],
+                 "enabled": data.get("enabled", True),
+                 "grants": data.get("grants", {})}
+                for name, data in sorted(self.hub.users.items())]
+
+    def list_device_catalog(self):
+        return [{"device_id": ident, "name": device["name"],
+                 "allowed_scopes": device.get("allowed_scopes", [])}
+                for ident, device in sorted(self.hub.devices.items())]
+
+    def _mutate_registry(self, update):
+        if not self.config_path:
+            raise RuntimeError("web administration unavailable without a registry path")
+        with self.lock:
+            data = json.loads(self.config_path.read_text(encoding="utf-8"))
+            if data.get("version") != 2:
+                raise ValueError("invalid registry")
+            result = update(data)
+            fd, temporary = tempfile.mkstemp(prefix=".arc-web-", dir=self.config_path.parent)
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                    json.dump(data, fh, indent=2, ensure_ascii=False)
+                    fh.write("\n")
+                    fh.flush()
+                    os.fsync(fh.fileno())
+                os.chmod(temporary, 0o600)
+                os.replace(temporary, self.config_path)
+            finally:
+                if os.path.exists(temporary):
+                    os.unlink(temporary)
+            # Device enrollment still goes through the admin CLI, which restarts the service.
+            self.hub.users = data["users"]
+            return result
+
+    def create_user(self, acting, name, role):
+        if not self.is_admin(acting) or not isinstance(name, str) or not USER_NAME.fullmatch(name):
+            raise PermissionError("administrator or valid username required")
+        if role not in ALLOWED_ROLES or (role == "admin" and acting != "owner"):
+            raise PermissionError("only the owner can create administrators")
+        credential = secrets.token_urlsafe(48)
+        def mutate(data):
+            if name in data["users"]:
+                raise ValueError("username already exists")
+            data["users"][name] = {"role": role, "enabled": True,
+                                  "token_hash": _hash(credential), "grants": {}}
+            return {"username": name, "role": role, "token": credential}
+        return self._mutate_registry(mutate)
+
+    def grant(self, acting, name, device_id, scopes):
+        if not self.is_admin(acting):
+            raise PermissionError("administrator required")
+        if not isinstance(scopes, list) or not all(isinstance(x, str) for x in scopes):
+            raise ValueError("scopes must be an array")
+        def mutate(data):
+            account = data["users"].get(name)
+            device = data["devices"].get(device_id)
+            if not account or not device:
+                raise ValueError("unknown user or device")
+            allowed = ROLE_SCOPES[account["role"]] & set(device["allowed_scopes"])
+            if set(scopes) - allowed:
+                raise PermissionError("requested access exceeds role or device policy")
+            if not scopes:
+                account["grants"].pop(device_id, None)
+            else:
+                account["grants"][device_id] = sorted(set(scopes))
+            return {"username": name, "device_id": device_id, "scopes": sorted(set(scopes))}
+        return self._mutate_registry(mutate)
+
+    def set_user_enabled(self, acting, name, enabled):
+        if not self.is_admin(acting):
+            raise PermissionError("administrator required")
+        if not isinstance(enabled, bool) or name in ("owner", acting):
+            raise ValueError("cannot modify owner or current account")
+        def mutate(data):
+            account = data["users"].get(name)
+            if account is None:
+                raise ValueError("unknown user")
+            account["enabled"] = enabled
+            return {"username": name, "enabled": enabled}
+        return self._mutate_registry(mutate)
+
+
+def _send(handler, status, body, kind="application/json; charset=utf-8", cookie=None, redirect=None):
+    if isinstance(body, (dict, list)):
+        data = json.dumps(body, ensure_ascii=False).encode("utf-8")
+    elif isinstance(body, str):
+        data = body.encode("utf-8")
+    else:
+        data = body
+    handler.send_response(status)
+    handler.send_header("Content-Type", kind)
+    handler.send_header("Content-Length", str(len(data)))
+    handler.send_header("Cache-Control", "no-store, max-age=0")
+    handler.send_header("Pragma", "no-cache")
+    handler.send_header("X-Content-Type-Options", "nosniff")
+    handler.send_header("X-Frame-Options", "DENY")
+    handler.send_header("Referrer-Policy", "no-referrer")
+    handler.send_header("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+    handler.send_header("Content-Security-Policy",
+        "default-src 'none'; script-src 'self'; style-src 'self'; "
+        "img-src 'self' data:; connect-src 'self'; form-action 'self'; "
+        "base-uri 'none'; frame-ancestors 'none'")
+    if cookie:
+        handler.send_header("Set-Cookie", cookie)
+    if redirect:
+        handler.send_header("Location", redirect)
+    handler.end_headers()
+    try:
+        if data:
+            handler.wfile.write(data)
+    except (BrokenPipeError, OSError):
+        pass
+
+
+def _error(handler, status, msg):
+    _send(handler, status, {"error": msg})
+
+
+def _session(handler):
+    s = handler.server.web.get_session(handler.headers.get("Cookie"))
+    if not s:
+        _error(handler, 401, "login required")
+    return s
+
+
+def handle_get(handler, path):
+    web = handler.server.web
+    if path == "/":
+        _send(handler, 302, b"", redirect="/web/")
+        return
+    assets = {
+        "/web/": ("index.html", "text/html; charset=utf-8"),
+        "/web": ("index.html", "text/html; charset=utf-8"),
+        "/web/app.css": ("app.css", "text/css; charset=utf-8"),
+        "/web/app.js": ("app.js", "application/javascript; charset=utf-8")
+    }
+    if path in assets:
+        filename, mime = assets[path]
+        _send(handler, 200, (WEB_ROOT / filename).read_bytes(), kind=mime)
+        return
+    if path not in ("/web/api/me", "/web/api/devices", "/web/api/users", "/web/api/audit"):
+        _error(handler, 404, "not found")
+        return
+    sess = _session(handler)
+    if not sess:
+        return
+    user = sess["user"]
+    if path == "/web/api/me":
+        _send(handler, 200, {"user": user, "role": web.hub.users[user]["role"],
+                             "csrf": sess["csrf"]})
+    elif path == "/web/api/devices":
+        _send(handler, 200, {"devices": web.hub.device_list(user)})
+    elif path == "/web/api/users":
+        if not web.is_admin(user):
+            return _error(handler, 403, "administrator required")
+        _send(handler, 200, {"users": web.list_users(), "catalog": web.list_device_catalog()})
+    elif path == "/web/api/audit":
+        if not web.is_admin(user):
+            return _error(handler, 403, "administrator required")
+        path_audit = web.hub.audit_path
+        lines = deque(maxlen=80)
+        if path_audit and path_audit.exists():
+            with path_audit.open(encoding="utf-8", errors="replace") as f:
+                for line in f:
+                    if len(line) < 4096:
+                        try:
+                            lines.append(json.loads(line))
+                        except ValueError:
+                            pass
+        _send(handler, 200, {"entries": list(lines)})
+
+
+def handle_post(handler, path):
+    web = handler.server.web
+    if path not in ("/web/api/login", "/web/api/logout", "/web/api/call",
+                    "/web/api/control", "/web/api/users/create",
+                    "/web/api/users/grant", "/web/api/users/enabled"):
+        return _error(handler, 404, "not found")
+    # Browsers send Origin; require it to match the external HTTPS host.
+    origin = handler.headers.get("Origin")
+    host = handler.headers.get("Host", "")
+    if origin and origin != "https://" + host and not (
+            origin == "http://" + host and host.startswith(("127.0.0.1:", "localhost:"))):
+        return _error(handler, 403, "invalid origin")
+    try:
+        body = handler.json_body()
+        if not isinstance(body, dict):
+            return _error(handler, 400, "object required")
+    except (ValueError, json.JSONDecodeError, TypeError):
+        return _error(handler, 400, "invalid JSON")
+    if path == "/web/api/login":
+        login = web.login(body.get("user"), body.get("token"))
+        if not login:
+            return _error(handler, 401, "invalid login or temporary lockout")
+        session, _ = login
+        name = body["user"]
+        web.hub.audit(name, "-", "web_login", "ok")
+        cookie = ("arc_session=" + session +
+                  "; Path=/web; HttpOnly; Secure; SameSite=Strict; Max-Age=" + str(SESSION_TTL))
+        return _send(handler, 200, {"ok": True}, cookie=cookie)
+    sess = _session(handler)
+    if not sess:
+        return
+    if not hmac.compare_digest(str(body.get("csrf", "")), sess["csrf"]):
+        return _error(handler, 403, "invalid CSRF token")
+    user = sess["user"]
+    try:
+        if path == "/web/api/logout":
+            web.logout(handler.headers.get("Cookie"))
+            web.hub.audit(user, "-", "web_logout", "ok")
+            return _send(handler, 200, {"ok": True},
+                         cookie="arc_session=; Path=/web; HttpOnly; Secure; SameSite=Strict; Max-Age=0")
+        if path == "/web/api/call":
+            tool, dev, args = body.get("tool"), body.get("device_id"), body.get("arguments", {})
+            if not isinstance(args, dict) or len(json.dumps(args)) > 24_000:
+                return _error(handler, 400, "invalid arguments")
+            value = web.hub.dispatch(user, dev, tool, args)
+            return _send(handler, 200, {"result": value})
+        if path == "/web/api/control":
+            dev = body.get("device_id")
+            action = body.get("action")
+            if action == "take":
+                value = web.hub.take_control(user, dev)
+            elif action == "release":
+                value = web.hub.release_control(user, dev)
+            else:
+                return _error(handler, 400, "invalid action")
+            return _send(handler, 200, value)
+        if path == "/web/api/users/create":
+            result = web.create_user(user, body.get("username"), body.get("role"))
+            web.hub.audit(user, "-", "web_create_user", "ok")
+            return _send(handler, 201, result)
+        if path == "/web/api/users/grant":
+            result = web.grant(user, body.get("username"),
+                               body.get("device_id"), body.get("scopes"))
+            web.hub.audit(user, body.get("device_id"), "web_set_grant", "ok")
+            return _send(handler, 200, result)
+        if path == "/web/api/users/enabled":
+            result = web.set_user_enabled(user, body.get("username"), body.get("enabled"))
+            web.hub.audit(user, "-", "web_set_user_enabled", "ok")
+            return _send(handler, 200, result)
+    except PermissionError as exc:
+        return _error(handler, 403, str(exc)[:180])
+    except (TypeError, ValueError) as exc:
+        return _error(handler, 400, str(exc)[:180])
+    except (RuntimeError, TimeoutError, OSError) as exc:
+        return _error(handler, 503, str(exc)[:180])

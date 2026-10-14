@@ -5,7 +5,7 @@ if [[ "$EUID" != 0 ]]; then
   exit 1
 fi
 command -v python3 >/dev/null || { echo 'Python3 is required' >&2; exit 1; }
-[[ -f arc_hub.py && -f arc_admin.py && -f arc-hub.service ]] || {
+[[ -f arc_hub.py && -f arc_admin.py && -f arc_web.py && -f web/index.html && -f arc-hub.service ]] || {
   echo 'Run inside the unpacked ARC VDS package directory' >&2; exit 1;
 }
 if ! id -u arc-hub >/dev/null 2>&1; then
@@ -14,7 +14,9 @@ fi
 install -d -o root -g root -m 0755 /opt/arc
 install -d -o arc-hub -g arc-hub -m 0700 /etc/arc
 install -d -o arc-hub -g arc-hub -m 0700 /var/log/arc
-install -m 0644 arc_hub.py arc_admin.py /opt/arc/
+install -m 0644 arc_hub.py arc_admin.py arc_web.py /opt/arc/
+install -d -o root -g root -m 0755 /opt/arc/web
+install -m 0644 web/index.html web/app.css web/app.js /opt/arc/web/
 install -m 0644 arc-hub.service /etc/systemd/system/arc-hub.service
 if [[ ! -f /etc/arc/registry.json ]]; then
   runuser -u arc-hub -- python3 /opt/arc/arc_admin.py \

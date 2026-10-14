@@ -45,6 +45,25 @@ curl -fsSL https://raw.githubusercontent.com/DeadSoulf/ARC-Hub/main/scripts/inst
 
 **Review [the installer source](scripts/install-vds.sh) before running remote code as root.** Do not publish your owner credentials. The installer does **not** implement multi-user OAuth for ChatGPT; see the [full VDS guide](vds/README.md).
 
+## Веб-интерфейс ARC Web
+
+После установки ARC Hub панель будет доступна по адресу `https://YOUR-DOMAIN/web/`.
+Для входа используйте имя пользователя и **его персональный токен ARC**.
+Токен `owner` хранится на VDS в `/etc/arc/owner-credentials.json`; не отправляйте
+его в чат или GitHub. Доступны устройства, диагностика, экран, файлы,
+PowerShell по правам, управление пользователями и журнал действий.
+
+Обновление **уже установленного VDS** одной командой (проверьте исходник
+[update-web.sh](scripts/update-web.sh) перед запуском с sudo):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/DeadSoulf/ARC-Hub/main/scripts/update-web.sh | sudo bash
+```
+
+Скрипт обновляет сервер, сохраняет резервную копию и настраивает Caddy.
+Если Caddy обслуживает другие сайты, скрипт откажется его перезаписывать.
+Веб-вход по личным токенам **не заменяет OAuth/OIDC для общего ChatGPT-плагина**.
+
 ## Installation
 
 Follow the [VDS installation guide](vds/README.md) and [Windows agent guide](windows/README.md).

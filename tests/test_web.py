@@ -144,6 +144,35 @@ class WebTests(unittest.TestCase):
         status, _, _ = self.request("/web/api/me", cookie=child)
         self.assertEqual(status, 401)
 
+    def test_owner_only_update_queue(self):
+        location = Path(self.temp.name) / "update-queue"
+        location.mkdir()
+        self.server.web.update_dir = location
+        owner, csrf = self.login()
+        status, _, info = self.request("/web/api/server", cookie=owner)
+        self.assertEqual(status, 200)
+        self.assertTrue(info["enabled"])
+        self.assertEqual(info["state"], "idle")
+        status, _, _ = self.request("/web/api/server/update",
+                                    {}, cookie=owner)
+        self.assertEqual(status, 403)  # CSRF required
+        status, _, result = self.request("/web/api/server/update",
+                                         {"csrf": csrf}, cookie=owner)
+        self.assertEqual(status, 202)
+        self.assertEqual(result["state"], "queued")
+        self.assertTrue((location / "request").is_file())
+        status, _, _ = self.request("/web/api/server/update",
+                                    {"csrf": csrf}, cookie=owner)
+        self.assertEqual(status, 400)  # no duplicate queueing
+        bob, bob_csrf = self.login("bob")
+        status, _, _ = self.request("/web/api/server", cookie=bob)
+        self.assertEqual(status, 403)
+        status, _, _ = self.request("/web/api/server/update",
+                                    {"csrf": bob_csrf}, cookie=bob)
+        self.assertEqual(status, 403)
+        # Queue data is a marker only: no shell command or URL can be passed.
+        self.assertNotIn("curl", (location / "request").read_text())
+
     def test_logout_and_owner_protection(self):
         cookie, csrf = self.login()
         status, _, _ = self.request("/web/api/users/enabled", {

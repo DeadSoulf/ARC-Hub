@@ -64,6 +64,25 @@ curl -fsSL https://raw.githubusercontent.com/DeadSoulf/ARC-Hub/main/scripts/upda
 Если Caddy обслуживает другие сайты, скрипт откажется его перезаписывать.
 Веб-вход по личным токенам **не заменяет OAuth/OIDC для общего ChatGPT-плагина**.
 
+## Обновление сервера и клиент одним EXE
+
+В **ARC Web** владелец `owner` получает кнопку **«Обновить сервер»**.
+Она ставит запрос в очередь. Привилегированная задача `systemd`,
+установленная вместе с ARC Hub, запускает **только фиксированный скрипт**
+`/usr/local/libexec/arc-update-apply`, берёт код из
+`DeadSoulf/ARC-Hub`, запускает тесты и сохраняет резервную копию.
+Веб-сервер не имеет прав `root` и не принимает произвольные команды
+обновления. При перезапуске активные веб-сессии могут завершиться.
+
+Windows-клиент доступен единым исполняемым файлом
+[ARC-Agent-Setup.exe](https://github.com/DeadSoulf/ARC-Hub/releases/download/v0.3.0-preview/ARC-Agent-Setup.exe).
+Файл собирает **GitHub Actions на Windows** после обновления ветки `main`;
+пока задача сборки не завершилась, ссылка на релиз может возвращать 404.
+Установщик не требует отдельно установленного Python; использует
+`%LOCALAPPDATA%\ARC`, скрытый фоновой запуск и Task Scheduler.
+Первая версия **не подписана цифровой подписью**, перед запуском
+проверьте SHA-256 и доверенность источника.
+
 ## Installation
 
 Follow the [VDS installation guide](vds/README.md) and [Windows agent guide](windows/README.md).

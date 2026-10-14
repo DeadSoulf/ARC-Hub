@@ -1,0 +1,61 @@
+name: Build single-file ARC Agent EXE
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: arc-agent-preview-release
+  cancel-in-progress: false
+
+jobs:
+  windows-executable:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install packager
+        run: python -m pip install --disable-pip-version-check pyinstaller==6.16.0
+      - name: Compile standalone Windows installer
+        shell: pwsh
+        run: |
+          python -m PyInstaller --noconfirm --clean --onefile --windowed --name ARC-Agent-Setup --paths windows windows/arc_bundle.py
+          if ($LASTEXITCODE -ne 0) { throw "PyInstaller build failed" }
+      - name: Smoke-test bundled modules
+        shell: pwsh
+        run: |
+          & ".\dist\ARC-Agent-Setup.exe" --self-test
+          if ($LASTEXITCODE -ne 0) { throw "Frozen ARC Agent self-test failed" }
+      - name: Generate SHA-256 checksum
+        shell: pwsh
+        run: |
+          $sha = (Get-FileHash -Algorithm SHA256 "dist\ARC-Agent-Setup.exe").Hash.ToLowerInvariant()
+          "$sha  ARC-Agent-Setup.exe" | Set-Content "dist\ARC-Agent-Setup.exe.sha256" -Encoding ascii
+          Write-Host "Bundle sha256: $sha"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ARC-Agent-Setup-Windows
+          path: |
+            dist/ARC-Agent-Setup.exe
+            dist/ARC-Agent-Setup.exe.sha256
+          retention-days: 30
+      - name: Publish rolling preview installer for ARC Web download
+        if: github.ref == 'refs/heads/main'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $tag = "v0.3.0-preview"
+          gh release view $tag --repo "$env:GITHUB_REPOSITORY" *> $null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create $tag --repo "$env:GITHUB_REPOSITORY" --target "$env:GITHUB_SHA" --title "ARC Agent 0.3 preview (single-file Windows)" --prerelease --notes "Unsigned early preview. One ARC-Agent-Setup.exe contains the Windows runtime. Review the repository and verify SHA256 before use."
+            if ($LASTEXITCODE -ne 0) { throw "Could not publish preview release" }
+          }
+          gh release upload $tag --repo "$env:GITHUB_REPOSITORY" "dist/ARC-Agent-Setup.exe" "dist/ARC-Agent-Setup.exe.sha256" --clobber
+          if ($LASTEXITCODE -ne 0) { throw "Could not upload EXE release" }

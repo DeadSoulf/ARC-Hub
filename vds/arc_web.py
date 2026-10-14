@@ -40,6 +40,7 @@ class WebState:
         self.sessions = {}
         self.failures = defaultdict(deque)
         self.lock = threading.RLock()
+        self.update_dir = Path(os.environ.get("ARC_UPDATE_DIR", "/var/lib/arc-hub/updates"))
 
     def login(self, name, credential):
         if not isinstance(name, str) or not isinstance(credential, str) or (
@@ -103,6 +104,42 @@ class WebState:
                     self.sessions.pop(_hash(cookie.value), None)
         except Exception:
             pass
+
+    def server_status(self, name):
+        if name != "owner":
+            raise PermissionError("only owner can manage server updates")
+        base = self.update_dir
+        state = {"state": "idle", "detail": "No update requested"}
+        try:
+            if (base / "status.json").is_file():
+                loaded = json.loads((base / "status.json").read_text(encoding="utf-8"))
+                if isinstance(loaded, dict):
+                    state = {k: loaded.get(k) for k in ("state", "detail", "updated_unix")}
+        except (OSError, ValueError, TypeError):
+            state = {"state": "unknown", "detail": "Unable to read update status"}
+        if (base / "request").is_file():
+            state = {"state": "queued", "detail": "Owner update request queued"}
+        state["enabled"] = base.is_dir() and os.access(base, os.W_OK)
+        return state
+
+    def request_server_update(self, name):
+        if name != "owner":
+            raise PermissionError("only owner can request server updates")
+        with self.lock:
+            if not (self.update_dir.is_dir() and os.access(self.update_dir, os.W_OK)):
+                raise RuntimeError("server update service not configured")
+            current = self.server_status(name)
+            if current["state"] in ("running", "queued"):
+                raise ValueError("server update already in progress")
+            # File contents are intentionally not interpreted by privileged updater.
+            # Exactly one fixed root-owned updater is activated by systemd.path.
+            try:
+                with (self.update_dir / "request").open("x", encoding="ascii") as file:
+                    file.write("owner-approved\n")
+            except FileExistsError:
+                raise ValueError("server update already queued")
+            self.hub.audit(name, "-", "web_server_update", "queued")
+            return {"state": "queued", "detail": "Upgrade queued. You may need to log in again after restart."}
 
     def is_admin(self, name):
         return self.hub.users.get(name, {}).get("role") == "admin"
@@ -248,7 +285,7 @@ def handle_get(handler, path):
         filename, mime = assets[path]
         _send(handler, 200, (WEB_ROOT / filename).read_bytes(), kind=mime)
         return
-    if path not in ("/web/api/me", "/web/api/devices", "/web/api/users", "/web/api/audit"):
+    if path not in ("/web/api/me", "/web/api/devices", "/web/api/users", "/web/api/audit", "/web/api/server"):
         _error(handler, 404, "not found")
         return
     sess = _session(handler)
@@ -264,6 +301,10 @@ def handle_get(handler, path):
         if not web.is_admin(user):
             return _error(handler, 403, "administrator required")
         _send(handler, 200, {"users": web.list_users(), "catalog": web.list_device_catalog()})
+    elif path == "/web/api/server":
+        if user != "owner":
+            return _error(handler, 403, "owner required")
+        _send(handler, 200, web.server_status(user))
     elif path == "/web/api/audit":
         if not web.is_admin(user):
             return _error(handler, 403, "administrator required")
@@ -284,7 +325,8 @@ def handle_post(handler, path):
     web = handler.server.web
     if path not in ("/web/api/login", "/web/api/logout", "/web/api/call",
                     "/web/api/control", "/web/api/users/create",
-                    "/web/api/users/grant", "/web/api/users/enabled"):
+                    "/web/api/users/grant", "/web/api/users/enabled",
+                    "/web/api/server/update"):
         return _error(handler, 404, "not found")
     # Browsers send Origin; require it to match the external HTTPS host.
     origin = handler.headers.get("Origin")
@@ -315,6 +357,9 @@ def handle_post(handler, path):
         return _error(handler, 403, "invalid CSRF token")
     user = sess["user"]
     try:
+        if path == "/web/api/server/update":
+            result = web.request_server_update(user)
+            return _send(handler, 202, result)
         if path == "/web/api/logout":
             web.logout(handler.headers.get("Cookie"))
             web.hub.audit(user, "-", "web_logout", "ok")

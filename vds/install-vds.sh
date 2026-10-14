@@ -13,6 +13,8 @@ if ! id -u arc-hub >/dev/null 2>&1; then
 fi
 install -d -o root -g root -m 0755 /opt/arc
 install -d -o arc-hub -g arc-hub -m 0700 /etc/arc
+# ARC Hub performs atomic registry updates when devices pair from the UI.
+# ProtectSystem=strict is retained; only /etc/arc is writable to this service.
 install -d -o arc-hub -g arc-hub -m 0700 /var/log/arc
 install -d -o arc-hub -g arc-hub -m 0700 /var/lib/arc-hub/updates
 install -d -o root -g root -m 0755 /usr/local/libexec

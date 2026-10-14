@@ -240,6 +240,17 @@ def remove_task() -> str:
     return "ARC Agent autostart removed. Local configuration and logs were retained."
 
 
+def normalize_pasted_pair_code(raw: str) -> str:
+    """Format clipboard content without interpreting unrelated text as a code."""
+    if not isinstance(raw, str):
+        raise ValueError("В буфере обмена нет кода ARC")
+    code = raw.strip().upper().replace("-", "").replace(" ", "")
+    valid = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+    if len(code) != 12 or any(c not in valid for c in code):
+        raise ValueError("В буфере обмена должен быть 12-символьный код ARC")
+    return "-".join(code[i:i+4] for i in range(0, 12, 4))
+
+
 def gui():
     import tkinter as tk
     from tkinter import messagebox, ttk
@@ -293,17 +304,53 @@ def gui():
     def connect_with_code():
         dialog = tk.Toplevel(window)
         dialog.title("ARC Hub — подключить по коду")
-        dialog.geometry("440x240")
+        dialog.geometry("475x320")
         dialog.resizable(False, False)
         dialog.transient(window)
         dialog.grab_set()
         host = tk.StringVar(value="https://vpn.homeaicore.ru")
         code = tk.StringVar()
         tk.Label(dialog, text="Адрес ARC Hub (HTTPS)").pack(pady=(15, 2))
-        tk.Entry(dialog, textvariable=host, width=49).pack()
+        host_entry = tk.Entry(dialog, textvariable=host, width=51)
+        host_entry.pack()
         tk.Label(dialog, text="Одноразовый код из ARC Web").pack(pady=(10, 2))
-        tk.Entry(dialog, textvariable=code, width=28).pack()
-        tk.Label(dialog, text="Код действует 10 минут и подходит только для одного ПК.").pack(pady=7)
+        code_row = tk.Frame(dialog)
+        code_row.pack(pady=(0, 3))
+        code_entry = tk.Entry(code_row, textvariable=code, width=25)
+        code_entry.pack(side="left", padx=(0, 9))
+
+        def paste_code(event=None):
+            # Read clipboard only after an explicit Paste action; no polling.
+            try:
+                value = dialog.clipboard_get()
+            except tk.TclError:
+                messagebox.showerror("ARC Hub", "Буфер обмена пуст или недоступен", parent=dialog)
+                return "break"
+            try:
+                code.set(normalize_pasted_pair_code(value))
+            except ValueError as exc:
+                messagebox.showerror("ARC Hub", str(exc), parent=dialog)
+                return "break"
+            code_entry.focus_set()
+            code_entry.icursor("end")
+            return "break"
+
+        ttk.Button(code_row, text="Вставить код", command=paste_code).pack(side="left")
+        menu = tk.Menu(dialog, tearoff=0)
+        menu.add_command(label="Вставить код из буфера", command=paste_code)
+        menu.add_command(label="Копировать", command=lambda: code_entry.event_generate("<<Copy>>"))
+        def context_menu(event):
+            menu.tk_popup(event.x_root, event.y_root)
+            menu.grab_release()
+        code_entry.bind("<Button-3>", context_menu)
+        code_entry.bind("<Control-v>", paste_code)
+        code_entry.bind("<Control-V>", paste_code)
+        code_entry.bind("<Shift-Insert>", paste_code)
+        code_entry.focus_set()
+        tk.Label(dialog, text="Скопируйте код в ARC Web, затем нажмите «Вставить код».",
+                 wraplength=435).pack(pady=6)
+        tk.Label(dialog, text="Код действует 10 минут и подходит только для одного ПК.",
+                 wraplength=435).pack(pady=3)
         def submit():
             try:
                 message = enroll_by_code(host.get(), code.get())

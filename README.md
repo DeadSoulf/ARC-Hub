@@ -133,6 +133,33 @@ curl -fsSL https://raw.githubusercontent.com/DeadSoulf/ARC-Hub/main/scripts/upda
 Скрипт делает резервную копию, проверяет новую службу, обновляет
 systemd-контроль и UI. Старые токены/реестр пользователей сохраняются.
 
+## Исправление HTTP 503 и обновлений (VDS)
+
+Если при подключении компьютера появлялось `HTTP 503`, прежний
+`arc-hub.service` имел `ProtectSystem=strict`, но не разрешал
+создавать временный файл реестра в `/etc/arc`. Теперь доступна запись
+**только** в `/etc/arc`, `/var/log/arc` и
+`/var/lib/arc-hub/updates`. Общая защита файловой системы сохраняется.
+
+Применить новую службу и веб-интерфейс на уже установленном VDS:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/DeadSoulf/ARC-Hub/main/scripts/update-web.sh | sudo bash
+```
+
+После обновления проверьте `sudo systemctl status arc-hub`.
+Если обновление из веб-панели по-прежнему завершается ошибкой,
+выполните на VDS (редактируйте или удаляйте секреты перед отправкой лога):
+
+```bash
+sudo systemctl status arc-update.path arc-update.service --no-pager
+sudo journalctl -u arc-update.service -n 50 --no-pager
+sudo tail -n 60 /var/log/arc/update.log
+```
+
+В пользовательском UI видны только этап и общее сообщение, но не
+привилегированные журналы и токены.
+
 ## Installation
 
 Follow the [VDS installation guide](vds/README.md) and [Windows agent guide](windows/README.md).

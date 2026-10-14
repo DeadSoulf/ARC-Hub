@@ -26,3 +26,8 @@ jobs:
           bash -n scripts/install-vds.sh
           bash -n vds/install-vds.sh
           bash scripts/install-vds.sh --help | grep -q "ARC Hub quick installer"
+
+      - name: Check dashboard JavaScript
+        run: node --check vds/web/app.js
+      - name: Check existing deployment update syntax
+        run: bash -n scripts/update-web.sh

@@ -22,6 +22,7 @@ import threading
 import time
 import uuid
 from urllib.parse import parse_qs, urlsplit
+from arc_web import WebState, handle_get as web_get, handle_post as web_post
 
 ROLE_SCOPES = {
     "viewer": {"status"},
@@ -245,9 +246,10 @@ class Server(ThreadingHTTPServer):
     daemon_threads = True
     request_queue_size = 64
 
-    def __init__(self, address, hub):
+    def __init__(self, address, hub, registry_path=None):
         super().__init__(address, Handler)
         self.hub = hub
+        self.web = WebState(hub, registry_path)
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -297,6 +299,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         path = urlsplit(self.path).path
+        if path == "/" or path.startswith("/web"):
+            return web_get(self, path)
         if path == "/healthz":
             return self.send_obj(200, {"status": "ok", "service": "arc-hub"})
         if path != "/agent/poll":
@@ -306,6 +310,9 @@ class Handler(BaseHTTPRequestHandler):
         return self.send_obj(200, {"task": self.server.hub.poll(self.device_id())})
 
     def do_POST(self):
+        path = urlsplit(self.path).path
+        if path.startswith("/web/api/"):
+            return web_post(self, path)
         if self.headers.get("Origin") or self.headers.get("Sec-Fetch-Site") in ("same-site", "cross-site"):
             return self.send_obj(403, {"error": "browser origin rejected"})
         path = urlsplit(self.path).path
@@ -391,7 +398,7 @@ def main():
         parser.error("ARC Hub must bind to loopback; place a secured HTTPS proxy in front")
     cfg = json.loads(args.config.read_text(encoding="utf-8"))
     hub = Hub(cfg, args.audit)
-    server = Server((args.bind, args.port), hub)
+    server = Server((args.bind, args.port), hub, args.config)
     print("ARC_HUB_READY bind=%s port=%d" % (args.bind, args.port), flush=True)
     try:
         server.serve_forever()

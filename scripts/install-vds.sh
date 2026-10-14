@@ -86,7 +86,7 @@ TMP="$(mktemp -d /tmp/arc-install.XXXXXXXX)"
 info "downloading ARC Hub ref $REF"
 git -c advice.detachedHead=false clone --quiet --depth 1 --branch "$REF" "$REPO" "$TMP/repo" ||
   fail "GitHub clone failed (ref=$REF)"
-for file in arc_hub.py arc_admin.py arc-hub.service install-vds.sh; do
+for file in arc_hub.py arc_admin.py arc_web.py web/index.html web/app.css web/app.js arc-hub.service install-vds.sh; do
   [[ -f "$TMP/repo/vds/$file" ]] || fail "downloaded repo missing vds/$file"
 done
 info "installing ARC Hub service"
@@ -101,13 +101,7 @@ cat > "$config" <<EOF
 # Managed by ARC Hub installer
 # ARC Hub itself binds exclusively to 127.0.0.1:8877.
 $DOMAIN {
-    @arc path /mcp /agent/poll /agent/result
-    handle @arc {
-        reverse_proxy 127.0.0.1:8877
-    }
-    handle {
-        respond "not found" 404
-    }
+    reverse_proxy 127.0.0.1:8877
 }
 EOF
 caddy validate --config "$config" --adapter caddyfile >/dev/null ||

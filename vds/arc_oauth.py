@@ -186,7 +186,11 @@ class OAuth:
                 raise ValueError("invalid ChatGPT redirect_uris")
             if body.get("token_endpoint_auth_method", "none") != "none":
                 raise ValueError("only public PKCE clients are allowed")
-            if body.get("grant_types", ["authorization_code"]) != ["authorization_code"]:
+            grants = body.get("grant_types", ["authorization_code"])
+            if (not isinstance(grants, list) or not 1 <= len(grants) <= 2
+                    or len(set(grants)) != len(grants)
+                    or "authorization_code" not in grants
+                    or not set(grants) <= {"authorization_code", "refresh_token"}):
                 raise ValueError("unsupported grant type")
             if body.get("response_types", ["code"]) != ["code"]:
                 raise ValueError("unsupported response type")

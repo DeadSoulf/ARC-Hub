@@ -412,7 +412,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_obj(202)
             if method == "initialize":
                 out = {"protocolVersion": "2025-03-26",
-                       "serverInfo": {"name": "arc", "version": "0.2.0"},
+                       "serverInfo": {"name": "arc", "version": "0.3.0"},
                        "capabilities": {"tools": {"listChanged": False}}}
             elif method == "ping":
                 out = {}

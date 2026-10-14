@@ -347,7 +347,9 @@ def _send(handler, status, body, kind="application/json; charset=utf-8", cookie=
         "img-src 'self' data:; connect-src 'self'; form-action 'self'; "
         "base-uri 'none'; frame-ancestors 'none'")
     if cookie:
-        handler.send_header("Set-Cookie", cookie)
+        cookies = [cookie] if isinstance(cookie, str) else cookie
+        for one_cookie in cookies:
+            handler.send_header("Set-Cookie", one_cookie)
     if redirect:
         handler.send_header("Location", redirect)
     handler.end_headers()
@@ -471,7 +473,8 @@ def handle_post(handler, path):
             web.logout(handler.headers.get("Cookie"))
             web.hub.audit(user, "-", "web_logout", "ok")
             return _send(handler, 200, {"ok": True},
-                         cookie="arc_session=; Path=/web; HttpOnly; Secure; SameSite=Strict; Max-Age=0")
+                         cookie=["arc_session=; Path=/web; HttpOnly; Secure; SameSite=Strict; Max-Age=0",
+                                 "arc_session=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0"])
         if path == "/web/api/call":
             tool, dev, args = body.get("tool"), body.get("device_id"), body.get("arguments", {})
             if not isinstance(args, dict) or len(json.dumps(args)) > 24_000:

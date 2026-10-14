@@ -8,6 +8,7 @@ Type=simple
 User=arc-hub
 Group=arc-hub
 WorkingDirectory=/opt/arc
+EnvironmentFile=-/etc/arc/oauth.env
 ExecStart=/usr/bin/python3 -B /opt/arc/arc_hub.py --config /etc/arc/registry.json --bind 127.0.0.1 --port 8877 --audit /var/log/arc/audit.jsonl
 Restart=always
 RestartSec=5

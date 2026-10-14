@@ -147,7 +147,7 @@ class OAuthTests(unittest.TestCase):
         self.assertTrue(error["isError"])
         self.assertIn("mcp/www_authenticate", error["_meta"])
         self.assertIn("resource_metadata", error["_meta"]["mcp/www_authenticate"][0])
-        self.assertIn("error=\\\"invalid_token\\\"", error["_meta"]["mcp/www_authenticate"][0])
+        self.assertIn('error="invalid_token"', error["_meta"]["mcp/www_authenticate"][0])
 
     def test_client_redirect_allowlist_and_flow_validation(self):
         rejected = json.dumps({"redirect_uris": ["https://evil.example/callback"]}).encode()

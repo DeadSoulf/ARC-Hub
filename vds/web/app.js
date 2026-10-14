@@ -85,6 +85,7 @@ async function bootstrap() {
     $("newRole").querySelector('option[value="admin"]').hidden = state.user !== "owner";
     $("updateServer").hidden = state.user !== "owner";
     $("createPairCode").hidden = state.user !== "owner";
+    $("removeDevice").hidden = state.user !== "owner";
     $("hubAddress").textContent = window.location.origin;
     if (updatePoller) clearInterval(updatePoller);
     updatePoller = null;
@@ -193,6 +194,7 @@ function renderDetails() {
   $("takeControl").disabled = !d?.online || !(d.permissions.some(s =>
     ["apps.launch", "input.control", "files.write", "shell.exec"].includes(s)));
   $("releaseControl").disabled = !state.control;
+  $("removeDevice").disabled = !d || state.user !== "owner";
   document.querySelectorAll("[data-tool]").forEach(b => {
     const s = b.dataset.tool === "computer_status" ? "status" : "inspect";
     b.disabled = !d?.online || !permitted(s);
@@ -384,6 +386,31 @@ $("listFiles").addEventListener("click", () => fileAction("list_directory"));
 $("readFile").addEventListener("click", () => fileAction("read_text_file"));
 $("takeControl").addEventListener("click", () => takeControl("take"));
 $("releaseControl").addEventListener("click", () => takeControl("release"));
+$("removeDevice").addEventListener("click", async () => {
+  if (state.user !== "owner") return;
+  const selected = device();
+  if (!selected) return notify("Сначала выберите компьютер", true);
+  const answer = prompt(
+    "Удалить устройство «" + selected.name + "» из ARC Hub?\n" +
+    "Будут отозваны ключ устройства и все права пользователей.\n" +
+    "Файлы на компьютере не удаляются.\n\n" +
+    "Для подтверждения введите точное имя компьютера:", ""
+  );
+  if (answer === null) return;
+  if (answer !== selected.name) return notify("Имя не совпадает. Удаление отменено.", true);
+  if (!confirm("Последнее подтверждение: отозвать подключение «" + selected.name +
+               "» и удалить его из ARC Hub?")) return;
+  try {
+    await api("/web/api/devices/remove", "POST", {
+      device_id: selected.device_id, confirm_name: selected.name
+    });
+    state.selected = null;
+    state.control = false;
+    notify("Устройство удалено из ARC Hub. Для нового подключения сбросьте привязку в ARC Agent.");
+    await refreshDevices();
+    if (state.role === "admin") await refreshUsers();
+  } catch (err) { notify(err.message, true); }
+});
 $("captureScreen").addEventListener("click", capture);
 $("remoteScreen").addEventListener("click", async e => {
   if (!state.control || !permitted("input.control")) return notify("Сначала получите управление", true);

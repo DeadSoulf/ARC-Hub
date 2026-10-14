@@ -19,6 +19,10 @@ CODE_TTL = 600
 DEVICE_ID = re.compile(r"^[a-fA-F0-9]{32}$")
 
 
+class DeviceAlreadyRegistered(ValueError):
+    """A verified identity is already enrolled in ARC Hub."""
+
+
 def normalize(code):
     if not isinstance(code, str):
         return ""
@@ -84,14 +88,14 @@ class Pairing:
                 raise PermissionError("invalid or expired pairing code")
             if identity in self.web.hub.devices:
                 # Never rotate an existing device's credentials through a code.
-                raise ValueError("device is already enrolled")
+                raise DeviceAlreadyRegistered("device is already enrolled")
             credential = secrets.token_urlsafe(48)
             device = {"name": name, "token_hash": hashlib.sha256(
                 credential.encode("utf-8")).hexdigest(),
                 "enabled": True, "allowed_scopes": ["status", "inspect"]}
             def register(data):
                 if identity in data["devices"]:
-                    raise ValueError("device is already enrolled")
+                    raise DeviceAlreadyRegistered("device is already enrolled")
                 data["devices"][identity] = device
                 owner = data["users"].get("owner")
                 if not owner or not owner.get("enabled", True):

@@ -214,6 +214,46 @@ class WebState:
             self.hub.users = data["users"]
             return result
 
+    def remove_device(self, acting, device_id, confirm_name):
+        """Explicit owner-only forget: revoke device token and every user grant.
+
+        This never deletes files on a Windows PC; it removes only registration
+        on ARC Hub. Active tasks are refused rather than silently interrupted.
+        """
+        if acting != "owner":
+            raise PermissionError("only owner can remove registered devices")
+        if not isinstance(device_id, str) or not isinstance(confirm_name, str):
+            raise ValueError("device_id and confirmation name are required")
+        with self.lock:
+            stored = self.hub.devices.get(device_id)
+            if not stored:
+                raise ValueError("device not found (possibly already removed)")
+            if stored.get("name") != confirm_name:
+                raise ValueError("confirmation name does not match the device")
+            with self.hub.lock:
+                if any(task["device"] == device_id for task in self.hub.pending.values()):
+                    raise ValueError("device has pending operations; try again later")
+                lease = self.hub.leases.get(device_id)
+                if lease and lease.get("expires", 0) > time.monotonic():
+                    raise ValueError("release active remote control before removing device")
+
+            def mutate(db):
+                if device_id not in db["devices"]:
+                    raise ValueError("device was removed by another administrator")
+                del db["devices"][device_id]
+                for user in db["users"].values():
+                    user.get("grants", {}).pop(device_id, None)
+                return {"device_id": device_id, "removed": True}
+
+            result = self._mutate_registry(mutate)
+            with self.hub.lock:
+                self.hub.devices.pop(device_id, None)
+                self.hub.queues.pop(device_id, None)
+                self.hub.seen.pop(device_id, None)
+                self.hub.leases.pop(device_id, None)
+            self.hub.audit(acting, device_id, "device_removed", "ok")
+            return result
+
     def create_user(self, acting, name, role):
         if not self.is_admin(acting) or not isinstance(name, str) or not USER_NAME.fullmatch(name):
             raise PermissionError("administrator or valid username required")
@@ -362,6 +402,7 @@ def handle_post(handler, path):
                     "/web/api/control", "/web/api/users/create",
                     "/web/api/users/grant", "/web/api/users/enabled",
                     "/web/api/pairing/create",
+                    "/web/api/devices/remove",
                     "/web/api/server/update"):
         return _error(handler, 404, "not found")
     # Browsers send Origin; require it to match the external HTTPS host.
@@ -398,6 +439,10 @@ def handle_post(handler, path):
             return _send(handler, 202, result)
         if path == "/web/api/pairing/create":
             return _send(handler, 201, web.pairing.issue(user))
+        if path == "/web/api/devices/remove":
+            result = web.remove_device(user, body.get("device_id"),
+                                       body.get("confirm_name"))
+            return _send(handler, 200, result)
         if path == "/web/api/logout":
             web.logout(handler.headers.get("Cookie"))
             web.hub.audit(user, "-", "web_logout", "ok")

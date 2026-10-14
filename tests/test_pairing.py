@@ -90,9 +90,10 @@ class PairingTests(unittest.TestCase):
         status, _, _ = self.request("/agent/enroll", {
             "device_id": "c" * 32, "name": "Second", "code": code})
         self.assertEqual(status, 403)
-        status, _, _ = self.request("/agent/enroll", {
+        status, result, _ = self.request("/agent/enroll", {
             "device_id": dev_id, "name": "Office PC", "code": self.code()})
-        self.assertEqual(status, 400)
+        self.assertEqual(status, 409)
+        self.assertIn("already enrolled", result["error"])
 
     def test_viewer_cannot_create_code_and_csrf_required(self):
         cookie, csrf = self.login("viewer")

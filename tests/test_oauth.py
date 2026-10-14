@@ -135,9 +135,19 @@ class OAuthTests(unittest.TestCase):
         self.assertEqual(meta["code_challenge_methods_supported"], ["S256"])
         self.assertTrue(meta["authorization_response_iss_parameter_supported"])
         mcp = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}).encode()
-        status, hdr, _ = self.request("/mcp", mcp, mime="application/json")
-        self.assertEqual(status, 401)
-        self.assertIn("resource_metadata", hdr["WWW-Authenticate"])
+        status, _, result = self.request("/mcp", mcp, mime="application/json")
+        self.assertEqual(status, 200)
+        self.assertEqual(len(result["result"]["tools"]), 5)
+        self.assertEqual(result["result"]["tools"][0]["securitySchemes"][0]["type"], "oauth2")
+        call = json.dumps({"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+                           "params": {"name": "arc_devices", "arguments": {}}}).encode()
+        status, _, challenge = self.request("/mcp", call, mime="application/json")
+        self.assertEqual(status, 200)
+        error = challenge["result"]
+        self.assertTrue(error["isError"])
+        self.assertIn("mcp/www_authenticate", error["_meta"])
+        self.assertIn("resource_metadata", error["_meta"]["mcp/www_authenticate"][0])
+        self.assertIn("error=\\\"invalid_token\\\"", error["_meta"]["mcp/www_authenticate"][0])
 
     def test_client_redirect_allowlist_and_flow_validation(self):
         rejected = json.dumps({"redirect_uris": ["https://evil.example/callback"]}).encode()
@@ -176,7 +186,9 @@ class OAuthTests(unittest.TestCase):
         self.assertEqual(json.loads(response["result"]["content"][0]["text"])[0]["device_id"], "asus")
         status, _, response = self.request("/mcp", body, mime="application/json",
                                           headers={"Authorization": "Bearer bogus"})
-        self.assertEqual(status, 401)
+        self.assertEqual(status, 200)
+        self.assertTrue(response["result"]["isError"])
+        self.assertIn("mcp/www_authenticate", response["result"]["_meta"])
 
     def test_pkce_mismatch_consumes_code(self):
         client = self.register()

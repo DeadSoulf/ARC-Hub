@@ -9,6 +9,21 @@ TEMP=""
 BACKUP=""
 CHANGED=0
 err() { printf 'ARC UPDATE ERROR: %s\n' "$*" >&2; exit 1; }
+# systemd restart returns before the Python HTTP listener is necessarily ready.
+# Wait for actual HTTP success, not merely the systemd Active state.
+wait_for_http() {
+  local url="$1" max_attempts="${2:-30}" label="${3:-ARC Hub}"
+  local attempt
+  for ((attempt=1; attempt<=max_attempts; attempt++)); do
+    if curl --fail --silent --max-time 3 "$url" >/dev/null; then
+      printf 'ARC: %s ready (attempt %s/%s)\n' "$label" "$attempt" "$max_attempts"
+      return 0
+    fi
+    sleep 1
+  done
+  printf 'ARC: %s not ready after %s attempts: %s\n' "$label" "$max_attempts" "$url" >&2
+  return 1
+}
 cleanup() {
   status=$?
   if ((status != 0 && CHANGED == 1)); then
@@ -18,6 +33,9 @@ cleanup() {
     if [[ -d "$BACKUP/web" ]]; then cp -a "$BACKUP/web" "$ROOT/"; else rm -rf "$ROOT/web"; fi
     cp -a "$BACKUP/Caddyfile" "$SITE" || true
     systemctl restart arc-hub || true
+    if ! wait_for_http http://127.0.0.1:8877/healthz 30 "rollback ARC Hub"; then
+      echo "ARC: rollback did not restore the HTTP service; inspect journalctl -u arc-hub -n 80" >&2
+    fi
     systemctl reload caddy || true
   fi
   [[ -z "$TEMP" ]] || rm -rf -- "$TEMP"
@@ -74,11 +92,16 @@ install -m 0644 "$TEMP/repo/vds/web/index.html" "$TEMP/repo/vds/web/app.css" \
   "$TEMP/repo/vds/web/app.js" "$ROOT/web/"
 install -m 0644 "$TEMP/Caddyfile" "$SITE"
 systemctl restart arc-hub
-systemctl is-active --quiet arc-hub || err "ARC Hub failed to start"
-curl -fsS --max-time 5 http://127.0.0.1:8877/healthz >/dev/null ||
-  err "health check failed"
-curl -fsS --max-time 5 http://127.0.0.1:8877/web/ >/dev/null ||
-  err "web HTML is not served"
+# Python HTTP server may need several seconds after systemd marks it active.
+if ! wait_for_http http://127.0.0.1:8877/healthz 30 "new ARC Hub"; then
+  echo "ARC: systemd status and recent Python logs:" >&2
+  systemctl --no-pager --full status arc-hub >&2 || true
+  journalctl -u arc-hub -n 40 --no-pager >&2 || true
+  err "ARC Hub did not become ready; rolling back"
+fi
+if ! wait_for_http http://127.0.0.1:8877/web/ 10 "ARC Web"; then
+  err "web HTML is not served; rolling back"
+fi
 systemctl reload caddy
 CHANGED=0
 echo "ARC_WEB_READY https://$domain/web/"

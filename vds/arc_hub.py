@@ -375,6 +375,15 @@ class Handler(BaseHTTPRequestHandler):
         principal = self.bearer_user()
         if principal is None and self.server.oauth is None:
             return self.send_obj(401, {"error": "unauthorized"})
+        # Before authentication, cap MCP discovery payloads. Large writes
+        # and device results are accepted only through authenticated paths.
+        if principal is None:
+            try:
+                unauth_size = int(self.headers.get("Content-Length", "-1"))
+            except ValueError:
+                unauth_size = -1
+            if not 0 <= unauth_size <= 8192:
+                return self.send_obj(413, {"error": "unauthenticated MCP body too large"})
         try:
             payload = self.json_body()
             if not isinstance(payload, dict) or payload.get("jsonrpc") != "2.0":

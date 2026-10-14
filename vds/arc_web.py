@@ -18,6 +18,7 @@ import threading
 import time
 import hashlib
 from urllib.parse import urlsplit
+from arc_pairing import Pairing
 
 WEB_ROOT = Path(__file__).with_name("web")
 SESSION_TTL = 8 * 60 * 60
@@ -41,6 +42,7 @@ class WebState:
         self.failures = defaultdict(deque)
         self.lock = threading.RLock()
         self.update_dir = Path(os.environ.get("ARC_UPDATE_DIR", "/var/lib/arc-hub/updates"))
+        self.pairing = Pairing(self)
 
     def login(self, name, credential):
         if not isinstance(name, str) or not isinstance(credential, str) or (
@@ -326,6 +328,7 @@ def handle_post(handler, path):
     if path not in ("/web/api/login", "/web/api/logout", "/web/api/call",
                     "/web/api/control", "/web/api/users/create",
                     "/web/api/users/grant", "/web/api/users/enabled",
+                    "/web/api/pairing/create",
                     "/web/api/server/update"):
         return _error(handler, 404, "not found")
     # Browsers send Origin; require it to match the external HTTPS host.
@@ -360,6 +363,8 @@ def handle_post(handler, path):
         if path == "/web/api/server/update":
             result = web.request_server_update(user)
             return _send(handler, 202, result)
+        if path == "/web/api/pairing/create":
+            return _send(handler, 201, web.pairing.issue(user))
         if path == "/web/api/logout":
             web.logout(handler.headers.get("Cookie"))
             web.hub.audit(user, "-", "web_logout", "ok")

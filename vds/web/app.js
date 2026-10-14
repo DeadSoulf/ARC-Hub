@@ -80,6 +80,8 @@ async function bootstrap() {
     document.querySelectorAll(".admin-nav").forEach(e => e.hidden = state.role !== "admin");
     $("newRole").querySelector('option[value="admin"]').hidden = state.user !== "owner";
     $("updateServer").hidden = state.user !== "owner";
+    $("createPairCode").hidden = state.user !== "owner";
+    $("hubAddress").textContent = window.location.origin;
     if (state.user === "owner") await refreshServerUpdate();
     await refreshDevices();
     if (state.role === "admin") await refreshUsers();
@@ -472,4 +474,21 @@ $("updateServer").addEventListener("click", async () => {
     $("serverUpdateState").textContent =
       "Обновление запущено; после перезапуска обновите страницу и войдите снова.";
   } catch (err) { notify(err.message, true); }
+});
+
+
+$("createPairCode").addEventListener("click", async () => {
+  if (state.user !== "owner") return;
+  try {
+    const result = await api("/web/api/pairing/create", "POST");
+    $("pairCodeText").textContent = result.code;
+    $("pairCodePanel").hidden = false;
+    notify("Одноразовый код создан. Действует 10 минут.");
+  } catch (err) { notify(err.message, true); }
+});
+$("copyPairCode").addEventListener("click", async () => {
+  try {
+    await navigator.clipboard.writeText($("pairCodeText").textContent);
+    notify("Код скопирован");
+  } catch { notify("Скопируйте код вручную", true); }
 });

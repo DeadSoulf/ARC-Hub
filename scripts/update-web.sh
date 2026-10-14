@@ -30,6 +30,7 @@ cleanup() {
     echo "ARC: update failed; restoring backed-up Hub and Caddy configuration" >&2
     cp -a "$BACKUP/arc_hub.py" "$ROOT/arc_hub.py" || true
     if [[ -f "$BACKUP/arc_web.py" ]]; then cp -a "$BACKUP/arc_web.py" "$ROOT/arc_web.py"; else rm -f "$ROOT/arc_web.py"; fi
+    if [[ -f "$BACKUP/arc_pairing.py" ]]; then cp -a "$BACKUP/arc_pairing.py" "$ROOT/arc_pairing.py"; else rm -f "$ROOT/arc_pairing.py"; fi
     if [[ -d "$BACKUP/web" ]]; then cp -a "$BACKUP/web" "$ROOT/"; else rm -rf "$ROOT/web"; fi
     cp -a "$BACKUP/Caddyfile" "$SITE" || true
     systemctl restart arc-hub || true
@@ -63,7 +64,7 @@ domain="$(awk '$1 ~ /^[a-zA-Z0-9-]+(\.[a-zA-Z0-9-]+)+$/ && $2=="{" {print $1}' "
 TEMP="$(mktemp -d /tmp/arc-web-upgrade.XXXXXXXX)"
 git -c advice.detachedHead=false clone --quiet --depth 1 --branch main \
   https://github.com/DeadSoulf/ARC-Hub.git "$TEMP/repo" || err "GitHub checkout failed"
-for p in vds/arc_hub.py vds/arc_web.py vds/web/index.html vds/web/app.css vds/web/app.js vds/arc-update.path vds/arc-update.service vds/arc-update-runner.sh scripts/update-web.sh; do
+for p in vds/arc_hub.py vds/arc_web.py vds/arc_pairing.py vds/web/index.html vds/web/app.css vds/web/app.js vds/arc-update.path vds/arc-update.service vds/arc-update-runner.sh scripts/update-web.sh; do
   [[ -f "$TEMP/repo/$p" ]] || err "missing $p in GitHub checkout"
 done
 ( cd "$TEMP/repo" &&
@@ -82,11 +83,13 @@ BACKUP="/var/backups/arc/arc-web-$(date +%Y%m%d-%H%M%S)"
 install -d -m 0700 "$BACKUP"
 cp -a "$ROOT/arc_hub.py" "$BACKUP/arc_hub.py"
 [[ ! -f "$ROOT/arc_web.py" ]] || cp -a "$ROOT/arc_web.py" "$BACKUP/arc_web.py"
+[[ ! -f "$ROOT/arc_pairing.py" ]] || cp -a "$ROOT/arc_pairing.py" "$BACKUP/arc_pairing.py"
 [[ ! -d "$ROOT/web" ]] || cp -a "$ROOT/web" "$BACKUP/web"
 cp -a "$SITE" "$BACKUP/Caddyfile"
 CHANGED=1
 install -m 0644 "$TEMP/repo/vds/arc_hub.py" "$ROOT/arc_hub.py"
 install -m 0644 "$TEMP/repo/vds/arc_web.py" "$ROOT/arc_web.py"
+install -m 0644 "$TEMP/repo/vds/arc_pairing.py" "$ROOT/arc_pairing.py"
 install -d -m 0755 "$ROOT/web"
 install -m 0644 "$TEMP/repo/vds/web/index.html" "$TEMP/repo/vds/web/app.css" \
   "$TEMP/repo/vds/web/app.js" "$ROOT/web/"

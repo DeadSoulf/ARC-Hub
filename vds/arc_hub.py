@@ -316,6 +316,20 @@ class Handler(BaseHTTPRequestHandler):
         if self.headers.get("Origin") or self.headers.get("Sec-Fetch-Site") in ("same-site", "cross-site"):
             return self.send_obj(403, {"error": "browser origin rejected"})
         path = urlsplit(self.path).path
+        if path == "/agent/enroll":
+            try:
+                length = int(self.headers.get("Content-Length", "-1"))
+                if not 0 < length <= 4096:
+                    return self.send_obj(400, {"error": "invalid request size"})
+                payload = self.json_body()
+                result = self.server.web.pairing.accept(payload)
+                return self.send_obj(201, result)
+            except PermissionError as exc:
+                return self.send_obj(403, {"error": str(exc)[:150]})
+            except (ValueError, TypeError, json.JSONDecodeError) as exc:
+                return self.send_obj(400, {"error": str(exc)[:150]})
+            except (OSError, RuntimeError):
+                return self.send_obj(503, {"error": "pairing temporarily unavailable"})
         if path == "/agent/result":
             if not self.check_agent():
                 return self.send_obj(401, {"error": "unauthorized"})

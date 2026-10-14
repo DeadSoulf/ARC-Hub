@@ -5,7 +5,7 @@ if [[ "$EUID" != 0 ]]; then
   exit 1
 fi
 command -v python3 >/dev/null || { echo 'Python3 is required' >&2; exit 1; }
-[[ -f arc_hub.py && -f arc_admin.py && -f arc_web.py && -f web/index.html && -f arc-hub.service && -f arc-update.service && -f arc-update.path && -f arc-update-runner.sh && -f ../scripts/update-web.sh ]] || {
+[[ -f arc_hub.py && -f arc_admin.py && -f arc_web.py && -f arc_pairing.py && -f web/index.html && -f arc-hub.service && -f arc-update.service && -f arc-update.path && -f arc-update-runner.sh && -f ../scripts/update-web.sh ]] || {
   echo 'Run inside the unpacked ARC VDS package directory' >&2; exit 1;
 }
 if ! id -u arc-hub >/dev/null 2>&1; then
@@ -16,7 +16,7 @@ install -d -o arc-hub -g arc-hub -m 0700 /etc/arc
 install -d -o arc-hub -g arc-hub -m 0700 /var/log/arc
 install -d -o arc-hub -g arc-hub -m 0700 /var/lib/arc-hub/updates
 install -d -o root -g root -m 0755 /usr/local/libexec
-install -m 0644 arc_hub.py arc_admin.py arc_web.py /opt/arc/
+install -m 0644 arc_hub.py arc_admin.py arc_web.py arc_pairing.py /opt/arc/
 install -d -o root -g root -m 0755 /opt/arc/web
 install -m 0644 web/index.html web/app.css web/app.js /opt/arc/web/
 install -m 0644 arc-hub.service /etc/systemd/system/arc-hub.service

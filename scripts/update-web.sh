@@ -32,14 +32,14 @@ command -v caddy >/dev/null || err "caddy is required"
 [[ "$ID" == "debian" ]] || err "supported OS: Debian"
 
 # Refuse to overwrite unrelated Caddy sites/proxies.
-sites="$(grep -Ec '^[[:space:]]*[a-zA-Z0-9.-]+[[:space:]]*\{' "$SITE" || true)"
+sites="$(grep -Ec '^[[:space:]]*[a-zA-Z0-9-]+(\.[a-zA-Z0-9-]+)+[[:space:]]*\{' "$SITE" || true)"
 [[ "$sites" == "1" ]] || err "expected exactly one ARC site in Caddyfile; edit manually if you host other sites"
 grep -Fq 'reverse_proxy 127.0.0.1:8877' "$SITE" || err "Caddyfile does not proxy ARC Hub"
 if ! grep -Fq '@arc path /mcp /agent/poll /agent/result' "$SITE" &&
    ! grep -Fq '# Managed by ARC Hub installer' "$SITE"; then
   err "Caddyfile is not an identified ARC configuration; refusing to replace it"
 fi
-domain="$(awk '$1 ~ /^[a-zA-Z0-9.-]+$/ && $2=="{" {print $1}' "$SITE" | head -n 1)"
+domain="$(awk '$1 ~ /^[a-zA-Z0-9-]+(\.[a-zA-Z0-9-]+)+$/ && $2=="{" {print $1}' "$SITE" | head -n 1)"
 [[ "$domain" =~ ^[a-zA-Z0-9-]+(\.[a-zA-Z0-9-]+)+$ ]] || err "invalid ARC DNS domain"
 
 TEMP="$(mktemp -d /tmp/arc-web-upgrade.XXXXXXXX)"

@@ -6,6 +6,7 @@ from pathlib import Path
 import re
 import sys
 import tempfile
+import time
 import threading
 import unittest
 from urllib.error import HTTPError
@@ -239,6 +240,45 @@ class OAuthTests(unittest.TestCase):
                            "refresh_token": fresh["refresh_token"]}).encode()
         status, _, _ = self.request("/oauth/token", form2, mime="application/x-www-form-urlencoded")
         self.assertEqual(status, 400)
+
+    def test_entire_open_notepad_control_flow_is_user_scoped(self):
+        # Fake Windows agent handles the dispatched task; no real GUI is used.
+        client, _, token = self.authorize_token()
+
+        def invoke(tool, arguments):
+            req = json.dumps({"jsonrpc": "2.0", "id": 100,
+                "method": "tools/call", "params": {"name": tool, "arguments": arguments}}).encode()
+            status, _, result = self.request(
+                "/mcp", req, mime="application/json",
+                headers={"Authorization": "Bearer " + token["access_token"]})
+            self.assertEqual(status, 200)
+            return result["result"]
+
+        action = {"device_id": "asus", "tool": "open_notepad", "arguments": {}}
+        denied = invoke("arc_call", action)
+        self.assertTrue(denied["isError"])  # Lease is mandatory.
+        lease = invoke("arc_take_control", {"device_id": "asus"})
+        self.assertFalse(lease.get("isError", False))
+        self.assertTrue(json.loads(lease["content"][0]["text"])["exclusive"])
+
+        def fake_agent():
+            task = self.hub.poll("asus")
+            self.assertEqual(task["tool"], "open_notepad")
+            self.assertTrue(self.hub.result("asus", {
+                "task_id": task["task_id"],
+                "result": {"launched": "notepad", "source": "fake-agent"}}))
+
+        worker = threading.Thread(target=fake_agent, daemon=True)
+        worker.start()
+        opened = invoke("arc_call", action)
+        worker.join(timeout=3)
+        self.assertFalse(worker.is_alive())
+        self.assertFalse(opened.get("isError", False))
+        self.assertEqual(json.loads(opened["content"][0]["text"])["launched"], "notepad")
+        released = invoke("arc_release_control", {"device_id": "asus"})
+        self.assertFalse(released.get("isError", False))
+        again = invoke("arc_call", action)
+        self.assertTrue(again["isError"])
 
     def test_wrong_resource_and_expired_token(self):
         client, _, token = self.authorize_token()

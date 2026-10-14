@@ -79,6 +79,8 @@ async function bootstrap() {
     $("avatar").textContent = state.user[0].toUpperCase();
     document.querySelectorAll(".admin-nav").forEach(e => e.hidden = state.role !== "admin");
     $("newRole").querySelector('option[value="admin"]').hidden = state.user !== "owner";
+    $("updateServer").hidden = state.user !== "owner";
+    if (state.user === "owner") await refreshServerUpdate();
     await refreshDevices();
     if (state.role === "admin") await refreshUsers();
   } catch {
@@ -434,3 +436,40 @@ $("grantForm").addEventListener("submit", async e => {
   } catch (err) { notify(err.message, true); }
 });
 bootstrap();
+
+async function refreshServerUpdate() {
+  if (state.user !== "owner") return;
+  try {
+    const status = await api("/web/api/server");
+    const label = $("serverUpdateState");
+    const descriptions = {
+      queued: "Обновление ARC Hub поставлено в очередь",
+      running: "ARC Hub обновляется. Возможно, понадобится повторный вход.",
+      success: "ARC Hub обновлён успешно.",
+      failed: "Обновление завершилось ошибкой. Проверьте журнал на VDS.",
+      unknown: "Не удалось определить состояние обновления."
+    };
+    label.hidden = !descriptions[status.state];
+    label.textContent = descriptions[status.state] || "";
+    $("updateServer").disabled = !status.enabled || ["queued", "running"].includes(status.state);
+    $("updateServer").title = status.enabled ? "Обновить ARC Hub из проверенного репозитория" :
+      "Требуется установка systemd-службы обновлений на VDS";
+  } catch (err) {
+    $("updateServer").disabled = true;
+    notify("Не удалось получить статус сервера: " + err.message, true);
+  }
+}
+
+$("updateServer").addEventListener("click", async () => {
+  if (state.user !== "owner") return;
+  if (!confirm("Обновить ARC Hub на VDS из ветки main GitHub?\n\n" +
+    "Служба будет перезапущена. Текущие сессии прервутся; будет создана резервная копия.")) return;
+  try {
+    const result = await api("/web/api/server/update", "POST");
+    notify(result.detail || "Обновление поставлено в очередь");
+    $("updateServer").disabled = true;
+    $("serverUpdateState").hidden = false;
+    $("serverUpdateState").textContent =
+      "Обновление запущено; после перезапуска обновите страницу и войдите снова.";
+  } catch (err) { notify(err.message, true); }
+});

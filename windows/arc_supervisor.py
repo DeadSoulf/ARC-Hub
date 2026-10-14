@@ -74,8 +74,12 @@ def spawn(args, log_name):
 
 
 def local_argv(cfg):
-    command = [sys.executable, str(BIN / "arc_http_full.py"),
-               "--port", str(cfg.get("port", 8876))]
+    if getattr(sys, "frozen", False):
+        command = [sys.executable, "--mode", "local",
+                   "--port", str(cfg.get("port", 8876))]
+    else:
+        command = [sys.executable, str(BIN / "arc_http_full.py"),
+                   "--port", str(cfg.get("port", 8876))]
     for path in cfg["roots"]:
         command.extend(["--allow-root", path])
     for key, flag in {"screen": "--enable-screen", "apps": "--enable-apps",
@@ -145,7 +149,10 @@ def supervisor():
                 next_worker = now + min(60, 2 ** min(retry_worker, 6))
             if enrolled and worker is None and now >= next_worker:
                 try:
-                    worker = spawn([sys.executable, str(BIN / "arc_worker.py")], "worker-output.log")
+                    worker_args = ([sys.executable, "--mode", "worker"]
+                                   if getattr(sys, "frozen", False)
+                                   else [sys.executable, str(BIN / "arc_worker.py")])
+                    worker = spawn(worker_args, "worker-output.log")
                     retry_worker = 0
                     log.info("hub worker pid=%s", worker.pid)
                 except Exception as exc:

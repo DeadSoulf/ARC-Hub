@@ -17,3 +17,26 @@ Do not share or publish enrollment JSON. Remove transfer copies after applying.
 Default local grants include only status and process/window inspection. To enable screen, files, apps, shell or input, configure opt-in `permissions` in agent.json and repeat corresponding explicit grants for the user and device in VDS registry. Changes will restart the owned child agent and worker. A system administrator can stop/uninstall; this is not intended to resist legitimate administrator control.
 
 Interactive desktop control works only in an unlocked logged-in user session. A true system service, native signed EXE/MSI and OAuth provider are future production tasks.
+
+## ARC Agent одним исполняемым файлом
+
+Скачайте **ARC-Agent-Setup.exe** из раздела Releases GitHub или кнопкой
+«Скачать клиент .exe» в ARC Web. Это один файл с встроенным Python,
+не ZIP с исходниками. Откройте его на Windows и нажмите
+«Установить / обновить». Приложение установится в
+`%LOCALAPPDATA%\ARC\ARC-Agent.exe` и зарегистрирует задачу
+`ARC Agent` для фонового запуска при входе в Windows.
+
+Клиент сохраняет существующий `agent.json`, данные регистрации и
+разрешённые каталоги. Для подключения к VDS требуется индивидуальный
+`device_id` и enrolment JSON, выданный владельцем Hub по
+защищённому каналу. Учётные данные **не входят в exe**.
+
+Это неподписанный preview; Windows SmartScreen может предупредить.
+Проверяйте SHA256 из одноимённого файла в Releases.
+Первое включение удалённого экрана, управления и PowerShell требует
+явного разрешения владельца компьютера и индивидуальных прав пользователя.
+
+**Внимание:** обновление установленного EXE выполняется только с
+проверенным источником. В production потребуются code signing,
+подписанные обновления, тестирование отката и GUI регистрации устройства.

@@ -22,7 +22,7 @@ ProtectKernelModules=true
 ProtectControlGroups=true
 RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
 CapabilityBoundingSet=
-ReadWritePaths=/var/log/arc
+ReadWritePaths=/var/log/arc /var/lib/arc-hub/updates
 MemoryMax=256M
 
 [Install]

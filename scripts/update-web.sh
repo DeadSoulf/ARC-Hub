@@ -63,7 +63,7 @@ domain="$(awk '$1 ~ /^[a-zA-Z0-9-]+(\.[a-zA-Z0-9-]+)+$/ && $2=="{" {print $1}' "
 TEMP="$(mktemp -d /tmp/arc-web-upgrade.XXXXXXXX)"
 git -c advice.detachedHead=false clone --quiet --depth 1 --branch main \
   https://github.com/DeadSoulf/ARC-Hub.git "$TEMP/repo" || err "GitHub checkout failed"
-for p in vds/arc_hub.py vds/arc_web.py vds/web/index.html vds/web/app.css vds/web/app.js; do
+for p in vds/arc_hub.py vds/arc_web.py vds/web/index.html vds/web/app.css vds/web/app.js vds/arc-update.path vds/arc-update.service vds/arc-update-runner.sh scripts/update-web.sh; do
   [[ -f "$TEMP/repo/$p" ]] || err "missing $p in GitHub checkout"
 done
 ( cd "$TEMP/repo" &&
@@ -103,6 +103,24 @@ if ! wait_for_http http://127.0.0.1:8877/web/ 10 "ARC Web"; then
   err "web HTML is not served; rolling back"
 fi
 systemctl reload caddy
+# Install an owner-triggered, root-owned fixed updater. The browser never runs shell.
+install -d -o arc-hub -g arc-hub -m 0700 /var/lib/arc-hub/updates
+install -d -m 0755 /usr/local/libexec
+install -m 0755 "$TEMP/repo/vds/arc-update-runner.sh" /usr/local/libexec/arc-update-runner.new
+mv -f /usr/local/libexec/arc-update-runner.new /usr/local/libexec/arc-update-runner
+install -m 0755 "$TEMP/repo/scripts/update-web.sh" /usr/local/libexec/arc-update-apply.new
+mv -f /usr/local/libexec/arc-update-apply.new /usr/local/libexec/arc-update-apply
+install -m 0644 "$TEMP/repo/vds/arc-update.path" "$TEMP/repo/vds/arc-update.service" /etc/systemd/system/
+install -m 0644 "$TEMP/repo/vds/arc-hub.service" /etc/systemd/system/
+( cd "$TEMP/repo" && git rev-parse --short=12 HEAD ) > /opt/arc/REVISION
+systemctl daemon-reload
+# Reload ARC Hub once more so the new systemd sandbox ReadWritePaths
+# includes /var/lib/arc-hub/updates; otherwise the browser cannot queue jobs.
+systemctl restart arc-hub
+if ! wait_for_http http://127.0.0.1:8877/healthz 30 "ARC Hub with update permissions"; then
+  err "ARC Hub did not become ready after systemd unit refresh; rolling back"
+fi
+systemctl enable --now arc-update.path
 CHANGED=0
 echo "ARC_WEB_READY https://$domain/web/"
 echo "Owner login: owner. Private credential file: /etc/arc/owner-credentials.json"

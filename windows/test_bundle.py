@@ -98,6 +98,22 @@ class BundleEnrollmentTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             arc_bundle.enroll_by_code("https://vpn.homeaicore.ru", "ABCD-EFGH-JKLM")
 
+    def test_reset_local_hub_connection_preserves_device_identity(self):
+        arc_bundle.enroll_agent(self.envelope(token="x"*60))
+        msg = arc_bundle.disconnect_from_hub()
+        updated = json.loads(self.config.read_text(encoding="utf-8"))
+        self.assertEqual(updated["gateway_url"], "")
+        self.assertEqual(updated["device_token"], "")
+        self.assertEqual(updated["device_id"], self.initial["device_id"])
+        self.assertEqual(updated["permissions"], self.initial["permissions"])
+        self.assertIn("сброшена", msg)
+        self.assertFalse((self.dir / "agent.json.disconnecting").exists())
+
+    def test_reset_local_connection_refuses_missing_configuration(self):
+        self.config.unlink()
+        with self.assertRaises(RuntimeError):
+            arc_bundle.disconnect_from_hub()
+
     def test_wrong_computer_denied(self):
         with self.assertRaises(ValueError):
             arc_bundle.enroll_agent(self.envelope(device_id="b"*32))

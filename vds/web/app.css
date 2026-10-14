@@ -35,3 +35,5 @@
   border:1px solid #397c70;border-radius:9px;
   background:#1b3c3a;color:#a1f0d7
 }
+
+.machine-detail .action-bar .danger-outline{font-size:.78rem;padding:10px 12px;white-space:nowrap}

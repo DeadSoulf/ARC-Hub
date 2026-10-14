@@ -181,6 +181,43 @@ def apply_enrollment_payload(payload: dict) -> str:
             "Keep the enrollment token private and delete the transferred JSON copy.")
 
 
+def disconnect_from_hub() -> str:
+    """Forget this device's local Hub credential, retaining its stable ID.
+
+    ARC Hub administrator must separately revoke the server-side device token.
+    The supervisor detects agent.json changes and restarts the worker.
+    """
+    if not CONFIG.is_file():
+        raise RuntimeError("ARC Agent не установлен")
+    cfg = json.loads(CONFIG.read_text(encoding="utf-8-sig"))
+    if not cfg.get("device_id"):
+        raise ValueError("Некорректный Device ID")
+    cfg["device_token"] = ""
+    cfg["gateway_url"] = ""
+    temp = CONFIG.with_name("agent.json.disconnecting")
+    with temp.open("x", encoding="utf-8") as output:
+        json.dump(cfg, output, ensure_ascii=False, indent=2)
+        output.flush()
+        os.fsync(output.fileno())
+    try:
+        user = os.environ.get("USERDOMAIN", "") + "\\" + os.environ.get("USERNAME", "")
+        if not user.strip("\\"):
+            raise RuntimeError("Не удалось определить пользователя Windows")
+        check = subprocess.run(
+            ["icacls.exe", str(temp), "/inheritance:r", "/grant:r", user + ":(F)"],
+            capture_output=True, timeout=10,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        if check.returncode != 0:
+            raise RuntimeError("Не удалось защитить локальный файл конфигурации")
+        os.replace(temp, CONFIG)
+    finally:
+        if temp.exists():
+            temp.unlink()
+    return ("Локальная привязка ARC Hub сброшена. Device ID сохранён: " +
+            cfg["device_id"] + "\nДля подключения создайте новый одноразовый код в ARC Web.")
+
+
 def enroll_by_code(gateway_url: str, code: str) -> str:
     """One-time pairing with ARC Hub; token is delivered only over verified TLS."""
     if not CONFIG.exists():
@@ -217,8 +254,16 @@ def enroll_by_code(gateway_url: str, code: str) -> str:
                 raise RuntimeError("ARC Hub не подтвердил регистрацию")
             result = json.loads(response.read(4096))
     except urllib.error.HTTPError as exc:
-        if exc.code in (400, 403):
-            raise RuntimeError("Код недействителен, просрочен или устройство уже зарегистрировано") from None
+        if exc.code == 409:
+            raise RuntimeError(
+                "Этот Device ID уже зарегистрирован на ARC Hub. "
+                "Если хотите подключить заново, сначала удалите устройство в ARC Web, "
+                "затем сбросьте локальную привязку в ARC Agent."
+            ) from None
+        if exc.code == 403:
+            raise RuntimeError("Код неверен или истёк. Создайте новый код в ARC Web.") from None
+        if exc.code == 400:
+            raise RuntimeError("ARC Hub отклонил формат запроса регистрации.") from None
         raise RuntimeError("Сервер отклонил регистрацию (HTTP " + str(exc.code) + ")") from None
     except urllib.error.URLError:
         raise RuntimeError("Не удалось подключиться к ARC Hub по HTTPS") from None
@@ -257,7 +302,7 @@ def gui():
 
     window = tk.Tk()
     window.title("ARC Agent — Setup")
-    window.geometry("490x475")
+    window.geometry("510x525")
     window.resizable(False, False)
     window.configure(bg="#121e2e")
 
@@ -360,6 +405,20 @@ def gui():
             except Exception as exc:
                 messagebox.showerror("ARC Hub", str(exc))
         ttk.Button(dialog, text="Подключить компьютер", command=submit).pack(pady=4)
+
+    def forget_enrollment():
+        if not messagebox.askyesno(
+            "ARC Hub — сбросить привязку",
+            "Сбросить локальные учётные данные ARC Hub?\n\n"
+            "Device ID и настройки доступа останутся прежними.\n"
+            "Сначала удалите устройство в ARC Web, чтобы отозвать его ключ на сервере.",
+            parent=window
+        ):
+            return
+        action(disconnect_from_hub)
+
+    ttk.Button(window, text="Сбросить локальную привязку ARC Hub",
+               command=forget_enrollment).pack(pady=4)
 
     ttk.Button(window, text="Подключить по одноразовому коду",
                command=connect_with_code).pack(pady=8)

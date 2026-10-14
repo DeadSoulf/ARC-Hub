@@ -23,6 +23,7 @@ import time
 import uuid
 from urllib.parse import parse_qs, urlsplit
 from arc_web import WebState, handle_get as web_get, handle_post as web_post
+from arc_pairing import DeviceAlreadyRegistered
 
 ROLE_SCOPES = {
     "viewer": {"status"},
@@ -324,6 +325,8 @@ class Handler(BaseHTTPRequestHandler):
                 payload = self.json_body()
                 result = self.server.web.pairing.accept(payload)
                 return self.send_obj(201, result)
+            except DeviceAlreadyRegistered:
+                return self.send_obj(409, {"error": "device already enrolled; remove it from ARC Web before pairing again"})
             except PermissionError as exc:
                 return self.send_obj(403, {"error": str(exc)[:150]})
             except (ValueError, TypeError, json.JSONDecodeError) as exc:

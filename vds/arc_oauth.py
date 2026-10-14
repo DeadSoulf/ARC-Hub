@@ -48,10 +48,12 @@ def _valid_redirect(value):
         url = urlsplit(value)
     except ValueError:
         return False
+    # The issuer advertises RFC 9207 identification, so ChatGPT uses
+    # one stable callback. Never let anonymous DCR callers invent arbitrary
+    # callback IDs and exhaust client slots.
     return (url.scheme == "https" and url.netloc == "chatgpt.com"
             and not url.query and not url.fragment
-            and (url.path == "/connector_platform_oauth_redirect"
-                 or bool(CALLBACK.fullmatch(url.path))))
+            and url.path == "/connector_platform_oauth_redirect")
 
 
 class OAuth:

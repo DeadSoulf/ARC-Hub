@@ -86,7 +86,7 @@ TMP="$(mktemp -d /tmp/arc-install.XXXXXXXX)"
 info "downloading ARC Hub ref $REF"
 git -c advice.detachedHead=false clone --quiet --depth 1 --branch "$REF" "$REPO" "$TMP/repo" ||
   fail "GitHub clone failed (ref=$REF)"
-for file in arc_hub.py arc_admin.py arc_web.py web/index.html web/app.css web/app.js arc-hub.service install-vds.sh; do
+for file in arc_hub.py arc_admin.py arc_web.py arc_pairing.py web/index.html web/app.css web/app.js arc-hub.service install-vds.sh; do
   [[ -f "$TMP/repo/vds/$file" ]] || fail "downloaded repo missing vds/$file"
 done
 info "installing ARC Hub service"

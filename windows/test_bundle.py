@@ -50,6 +50,43 @@ class BundleEnrollmentTests(unittest.TestCase):
         self.assertIn("connected", msg)
         self.assertFalse((self.dir / "agent.json.enrolling").exists())
 
+    def test_pair_by_code_without_json_file(self):
+        class FakeHttpResponse:
+            status = 201
+            def __enter__(self):
+                return self
+            def __exit__(self, *_):
+                return False
+            def read(self, _limit):
+                return json.dumps({
+                    "device_id": "a"*32,
+                    "device_token": "k"*64,
+                    "name": "Asus",
+                    "permissions": ["status", "inspect"]
+                }).encode("utf-8")
+        with patch.object(arc_bundle.urllib.request, "urlopen",
+                          return_value=FakeHttpResponse()) as mock_http:
+            message = arc_bundle.enroll_by_code(
+                "https://vpn.homeaicore.ru", "ABCD-EFGH-JKLM")
+        self.assertIn("подключён", message)
+        request = mock_http.call_args.args[0]
+        self.assertEqual(request.full_url, "https://vpn.homeaicore.ru/agent/enroll")
+        body = json.loads(request.data)
+        self.assertEqual(body["device_id"], "a"*32)
+        self.assertEqual(body["code"], "ABCDEFGHJKLM")
+        config = json.loads(self.config.read_text(encoding="utf-8"))
+        self.assertEqual(config["gateway_url"], "https://vpn.homeaicore.ru")
+        self.assertEqual(config["device_token"], "k"*64)
+        self.assertEqual(config["permissions"], self.initial["permissions"])
+
+    def test_pair_rejects_http_and_existing_enrollment(self):
+        with self.assertRaises(ValueError):
+            arc_bundle.enroll_by_code("http://vpn.homeaicore.ru", "ABCD-EFGH-JKLM")
+        self.assertFalse(self.config.read_text().count("k"*64))
+        arc_bundle.enroll_agent(self.envelope(token="x"*60))
+        with self.assertRaises(RuntimeError):
+            arc_bundle.enroll_by_code("https://vpn.homeaicore.ru", "ABCD-EFGH-JKLM")
+
     def test_wrong_computer_denied(self):
         with self.assertRaises(ValueError):
             arc_bundle.enroll_agent(self.envelope(device_id="b"*32))

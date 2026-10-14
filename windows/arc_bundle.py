@@ -18,6 +18,8 @@ import subprocess
 import sys
 import uuid
 from urllib.parse import urlsplit
+import urllib.request
+import urllib.error
 
 VERSION = "0.3.0-preview"
 BASE = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "ARC"
@@ -125,11 +127,16 @@ def install_agent() -> str:
 
 
 def enroll_agent(enrollment_file: str) -> str:
-    """Apply device-scoped credentials with the same EXE, without a .ps1 script."""
+    """Legacy offline enrollment from an administrator-issued JSON file."""
+    payload = json.loads(Path(enrollment_file).read_text(encoding="utf-8-sig"))
+    return apply_enrollment_payload(payload)
+
+
+def apply_enrollment_payload(payload: dict) -> str:
+    """Persist device credentials from a verified enrollment response."""
     if not CONFIG.is_file():
         raise RuntimeError("Install ARC Agent on this PC before enrollment")
     cfg = json.loads(CONFIG.read_text(encoding="utf-8-sig"))
-    payload = json.loads(Path(enrollment_file).read_text(encoding="utf-8-sig"))
     if not isinstance(payload, dict):
         raise ValueError("Enrollment JSON must contain an object")
     device_id = payload.get("device_id")
@@ -174,6 +181,54 @@ def enroll_agent(enrollment_file: str) -> str:
             "Keep the enrollment token private and delete the transferred JSON copy.")
 
 
+def enroll_by_code(gateway_url: str, code: str) -> str:
+    """One-time pairing with ARC Hub; token is delivered only over verified TLS."""
+    if not CONFIG.exists():
+        raise RuntimeError("Установите ARC Agent перед подключением")
+    cfg = json.loads(CONFIG.read_text(encoding="utf-8-sig"))
+    if cfg.get("device_token"):
+        raise RuntimeError("Компьютер уже зарегистрирован. Обратитесь к администратору для переподключения.")
+    if not isinstance(gateway_url, str):
+        raise ValueError("Укажите HTTPS-адрес ARC Hub")
+    u = urlsplit(gateway_url.strip())
+    if (u.scheme != "https" or not u.hostname or u.username or u.password
+        or u.query or u.fragment or u.path not in ("", "/")):
+        raise ValueError("Адрес ARC Hub должен быть вида https://vpn.homeaicore.ru")
+    # Reject local/insecure or ambiguous hostnames and invalid ports.
+    try:
+        _ = u.port
+    except ValueError as exc:
+        raise ValueError("Некорректный HTTPS-порт") from exc
+    if not isinstance(code, str) or len(code.strip()) > 32:
+        raise ValueError("Некорректный одноразовый код")
+    clean_code = code.upper().replace("-", "").replace(" ", "").strip()
+    if len(clean_code) != 12 or not clean_code.isalnum():
+        raise ValueError("Введите 12 символов одноразового кода")
+    payload = {"device_id": cfg["device_id"], "name": cfg.get("name") or "Windows PC",
+               "code": clean_code}
+    remote = gateway_url.strip().rstrip("/")
+    request = urllib.request.Request(
+        remote + "/agent/enroll", data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json", "Accept": "application/json"},
+        method="POST")
+    try:
+        with urllib.request.urlopen(request, timeout=15) as response:
+            if response.status != 201:
+                raise RuntimeError("ARC Hub не подтвердил регистрацию")
+            result = json.loads(response.read(4096))
+    except urllib.error.HTTPError as exc:
+        if exc.code in (400, 403):
+            raise RuntimeError("Код недействителен, просрочен или устройство уже зарегистрировано") from None
+        raise RuntimeError("Сервер отклонил регистрацию (HTTP " + str(exc.code) + ")") from None
+    except urllib.error.URLError:
+        raise RuntimeError("Не удалось подключиться к ARC Hub по HTTPS") from None
+    if not isinstance(result, dict) or result.get("device_id") != cfg["device_id"]:
+        raise RuntimeError("Некорректный ответ ARC Hub")
+    result["gateway_url"] = remote
+    message = apply_enrollment_payload(result)
+    return "Компьютер подключён к ARC Hub!\n" + message
+
+
 def remove_task() -> str:
     result = local_task(
         "Stop-ScheduledTask -TaskName 'ARC Agent' -ErrorAction SilentlyContinue;"
@@ -191,7 +246,7 @@ def gui():
 
     window = tk.Tk()
     window.title("ARC Agent — Setup")
-    window.geometry("470x390")
+    window.geometry("490x475")
     window.resizable(False, False)
     window.configure(bg="#121e2e")
 
@@ -235,8 +290,34 @@ def gui():
         ):
             action(lambda: enroll_agent(path))
 
-    ttk.Button(window, text="Подключить к ARC Hub (файл регистрации)",
-               command=browse_enrollment).pack(pady=8)
+    def connect_with_code():
+        dialog = tk.Toplevel(window)
+        dialog.title("ARC Hub — подключить по коду")
+        dialog.geometry("440x240")
+        dialog.resizable(False, False)
+        dialog.transient(window)
+        dialog.grab_set()
+        host = tk.StringVar(value="https://vpn.homeaicore.ru")
+        code = tk.StringVar()
+        tk.Label(dialog, text="Адрес ARC Hub (HTTPS)").pack(pady=(15, 2))
+        tk.Entry(dialog, textvariable=host, width=49).pack()
+        tk.Label(dialog, text="Одноразовый код из ARC Web").pack(pady=(10, 2))
+        tk.Entry(dialog, textvariable=code, width=28).pack()
+        tk.Label(dialog, text="Код действует 10 минут и подходит только для одного ПК.").pack(pady=7)
+        def submit():
+            try:
+                message = enroll_by_code(host.get(), code.get())
+                result.set(message)
+                dialog.destroy()
+                messagebox.showinfo("ARC Hub", message)
+            except Exception as exc:
+                messagebox.showerror("ARC Hub", str(exc))
+        ttk.Button(dialog, text="Подключить компьютер", command=submit).pack(pady=4)
+
+    ttk.Button(window, text="Подключить по одноразовому коду",
+               command=connect_with_code).pack(pady=8)
+    ttk.Button(window, text="Подключить через файл регистрации (резервный способ)",
+               command=browse_enrollment).pack(pady=5)
     window.mainloop()
 
 

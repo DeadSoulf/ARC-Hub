@@ -31,7 +31,11 @@ jobs:
         shell: pwsh
         run: |
           & ".\dist\ARC-Agent-Setup.exe" --self-test
-          if ($LASTEXITCODE -ne 0) { throw "Frozen ARC Agent self-test failed" }
+          if ($LASTEXITCODE -ne 0) {
+            $log = Join-Path $env:LOCALAPPDATA "ARC\logs\setup-error.log"
+            if (Test-Path $log) { Get-Content $log -Tail 35 }
+            throw "Frozen ARC Agent self-test failed"
+          }
       - name: Generate SHA-256 checksum
         shell: pwsh
         run: |

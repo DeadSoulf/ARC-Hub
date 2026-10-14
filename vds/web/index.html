@@ -72,6 +72,7 @@
             <div class="action-bar">
               <button id="takeControl" class="primary">Получить управление</button>
               <button id="releaseControl" class="ghost">Освободить</button>
+              <button id="toggleApps" class="subtle" hidden>Разрешить приложения</button>
               <button id="removeDevice" class="danger-outline" hidden>Удалить устройство</button>
             </div>
             <div class="tabs">
@@ -81,7 +82,7 @@
               <button data-tab="terminal" class="tab">PowerShell</button>
             </div>
             <div class="tab-panel" id="diagnostics">
-              <div class="mini-actions"><button data-tool="computer_status" class="subtle">Система</button><button data-tool="list_processes" class="subtle">Процессы</button><button data-tool="list_windows" class="subtle">Окна</button></div>
+              <div class="mini-actions"><button data-tool="computer_status" class="subtle">Система</button><button data-tool="list_processes" class="subtle">Процессы</button><button data-tool="list_windows" class="subtle">Окна</button><button id="openNotepad" class="subtle">Открыть Блокнот</button></div>
               <pre class="results" id="diagnosticOutput">Выберите действие, чтобы получить информацию с компьютера.</pre>
             </div>
             <div class="tab-panel" id="files" hidden>

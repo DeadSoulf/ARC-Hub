@@ -3,3 +3,24 @@
 .pair-panel{border:1px solid #397c70;border-radius:11px;background:#122d2d;padding:14px;margin:0 0 18px}
 .pair-panel code{display:block;margin:10px 0;font-size:1.25rem;letter-spacing:.07em;color:#8cf4cd;overflow-wrap:anywhere}
 .pair-panel .muted{font-size:.78rem}
+
+.update-progress{margin:0 0 24px;padding:19px 22px;border:1px solid #315e70;border-radius:15px;background:#112538;box-shadow:var(--shadow)}
+.update-progress.update-failed{border-color:#96505d;background:#32232c}
+.update-progress.update-success{border-color:#357764;background:#16342f}
+.update-top{display:flex;justify-content:space-between;align-items:center;gap:14px}
+.update-top h2{margin:0;font-size:1.05rem}
+#serverUpdatePercent{font-size:1.3rem;color:#77e3c8}
+.update-failed #serverUpdatePercent{color:#ffb5bb}
+#serverUpdateBar{display:block;width:100%;height:15px;accent-color:#50c8a9;margin:16px 0 10px;border-radius:15px}
+.update-failed #serverUpdateBar{accent-color:#dc7586}
+.update-status-row{display:flex;justify-content:space-between;gap:14px;font-size:.8rem;color:#b1c8d5;flex-wrap:wrap}
+.update-status-row time{color:var(--muted)}
+.update-stages{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:7px 12px;padding:0;list-style:none;margin:19px 0 6px}
+.update-stages li{border:1px solid #344659;border-radius:9px;padding:9px 11px;color:#7f91a5;font-size:.75rem}
+.update-stages li.done{border-color:#337964;background:#173b32;color:#b3f4d7}
+.update-stages li.done::before{content:"✓ ";color:#78e5b9}
+.update-stages li.current{border-color:#73dcc5;background:#204742;color:#ecfff9;font-weight:700}
+.update-stages li.error-step{border-color:#dd7183;color:#ffd0d5}
+.update-help{color:var(--muted);font-size:.78rem;margin:12px 0 0}
+@media(max-width:850px){.update-stages{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:510px){.update-stages{grid-template-columns:1fr}}

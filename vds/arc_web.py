@@ -111,16 +111,49 @@ class WebState:
         if name != "owner":
             raise PermissionError("only owner can manage server updates")
         base = self.update_dir
-        state = {"state": "idle", "detail": "No update requested"}
+        state = {
+            "state": "idle", "step": "idle", "percent": 0,
+            "detail": "Обновление пока не запрашивалось",
+            "updated_unix": None, "started_unix": None,
+        }
         try:
             if (base / "status.json").is_file():
-                loaded = json.loads((base / "status.json").read_text(encoding="utf-8"))
-                if isinstance(loaded, dict):
-                    state = {k: loaded.get(k) for k in ("state", "detail", "updated_unix")}
+                loaded = json.loads((base / "status.json").read_text(
+                    encoding="utf-8"))
+                if not isinstance(loaded, dict):
+                    raise ValueError("invalid update status")
+                phase = loaded.get("state")
+                stage = loaded.get("step")
+                value = loaded.get("percent", 0)
+                if phase not in ("idle", "queued", "running", "success", "failed"):
+                    raise ValueError("invalid update phase")
+                if stage not in ("idle", "queued", "prepare", "download", "test",
+                                 "backup", "install", "restart", "health", "service",
+                                 "rollback", "complete", "failed", None):
+                    raise ValueError("invalid update stage")
+                if not isinstance(value, int) or isinstance(value, bool):
+                    raise ValueError("invalid update percent")
+                detail = loaded.get("detail")
+                state = {
+                    "state": phase, "step": stage or phase,
+                    "percent": max(0, min(100, value)),
+                    "detail": str(detail or "")[:240],
+                    "updated_unix": loaded.get("updated_unix"),
+                    "started_unix": loaded.get("started_unix"),
+                }
+                # An interrupted updater should not leave an infinite spinner.
+                stamp = state["updated_unix"]
+                if phase == "running" and isinstance(stamp, int) and (
+                        time.time() - stamp > 480):
+                    state.update(state="failed", step="failed",
+                                 detail="Нет обновлений статуса более 8 минут; "
+                                        "проверьте arc-update.service на VDS.")
         except (OSError, ValueError, TypeError):
-            state = {"state": "unknown", "detail": "Unable to read update status"}
+            state.update(state="failed", step="failed",
+                         detail="Не удалось прочитать состояние обновления")
         if (base / "request").is_file():
-            state = {"state": "queued", "detail": "Owner update request queued"}
+            state.update(state="queued", step="queued", percent=0,
+                         detail="Запрос на обновление ожидает выполнения")
         state["enabled"] = base.is_dir() and os.access(base, os.W_OK)
         return state
 

@@ -56,6 +56,10 @@ async function api(path, method = "GET", payload = null) {
 }
 
 function showLogin() {
+  if (updatePoller) clearInterval(updatePoller);
+  updatePoller = null;
+  if (sessionStorage.getItem("arcUpdateInProgress") === "1")
+    $("loginError").textContent = "ARC Hub перезапустился. Войдите снова, чтобы продолжить просмотр обновления.";
   state.csrf = "";
   state.user = null;
   state.selected = null;
@@ -82,7 +86,12 @@ async function bootstrap() {
     $("updateServer").hidden = state.user !== "owner";
     $("createPairCode").hidden = state.user !== "owner";
     $("hubAddress").textContent = window.location.origin;
-    if (state.user === "owner") await refreshServerUpdate();
+    if (updatePoller) clearInterval(updatePoller);
+    updatePoller = null;
+    if (state.user === "owner") {
+      await refreshServerUpdate();
+      updatePoller = setInterval(refreshServerUpdate, 2200);
+    }
     await refreshDevices();
     if (state.role === "admin") await refreshUsers();
   } catch {
@@ -439,26 +448,73 @@ $("grantForm").addEventListener("submit", async e => {
 });
 bootstrap();
 
+const ARC_UPDATE_STAGES = [
+  ["prepare", "Подготовка"], ["download", "Загрузка GitHub"],
+  ["test", "Автоматические тесты"], ["backup", "Резервная копия"],
+  ["install", "Установка файлов"], ["restart", "Перезапуск ARC Hub"],
+  ["health", "Проверка работоспособности"],
+  ["service", "Обновление служб"], ["complete", "Завершение"]
+];
+let updatePoller = null;
+let updatePollBusy = false;
+
+function renderServerUpdate(status) {
+  const stateValue = status.state || "idle";
+  const panel = $("serverUpdateProgress");
+  const hasHistory = status.updated_unix != null || ["queued", "running", "success", "failed"].includes(stateValue);
+  panel.hidden = !hasHistory;
+  if (!hasHistory) return;
+  const percent = Math.max(0, Math.min(100, Number(status.percent) || 0));
+  const failed = stateValue === "failed";
+  panel.classList.toggle("update-failed", failed);
+  panel.classList.toggle("update-success", stateValue === "success");
+  $("serverUpdatePercent").textContent = percent + "%";
+  $("serverUpdateBar").value = percent;
+  $("serverUpdateTitle").textContent =
+    ({queued:"В очереди", running:"Обновление выполняется", success:"Обновление завершено",
+      failed:"Ошибка обновления"})[stateValue] || "Состояние обновления";
+  $("serverUpdateState").textContent = status.detail || "Ожидание статуса";
+  $("serverUpdateTime").textContent =
+    Number.isFinite(status.updated_unix) && status.updated_unix > 0
+      ? "Обновлено: " + new Date(status.updated_unix * 1000).toLocaleTimeString("ru-RU")
+      : "";
+  const stages = $("serverUpdateStages");
+  stages.replaceChildren();
+  const stageIndex = ARC_UPDATE_STAGES.findIndex(x => x[0] === status.step);
+  for (const [index, item] of ARC_UPDATE_STAGES.entries()) {
+    const step = document.createElement("li");
+    step.textContent = item[1];
+    if (stateValue === "success" || (stageIndex > index)) step.className = "done";
+    if (stageIndex === index && stateValue === "running") step.className = "current";
+    if (failed && (stageIndex === index || index === stageIndex - 1)) step.className = "error-step";
+    stages.append(step);
+  }
+  const help = $("serverUpdateHelp");
+  help.textContent = stateValue === "failed"
+    ? "Проверьте: sudo journalctl -u arc-update.service -n 60 --no-pager"
+    : stateValue === "success"
+      ? "Сервер обновлён. Если сессия прервалась, войдите заново."
+      : "Этапы обновляются автоматически. При перезапуске ARC Hub вход может потребоваться снова.";
+  if (stateValue === "success" || failed) sessionStorage.removeItem("arcUpdateInProgress");
+}
+
 async function refreshServerUpdate() {
-  if (state.user !== "owner") return;
+  if (state.user !== "owner" || updatePollBusy) return;
+  updatePollBusy = true;
   try {
     const status = await api("/web/api/server");
-    const label = $("serverUpdateState");
-    const descriptions = {
-      queued: "Обновление ARC Hub поставлено в очередь",
-      running: "ARC Hub обновляется. Возможно, понадобится повторный вход.",
-      success: "ARC Hub обновлён успешно.",
-      failed: "Обновление завершилось ошибкой. Проверьте журнал на VDS.",
-      unknown: "Не удалось определить состояние обновления."
-    };
-    label.hidden = !descriptions[status.state];
-    label.textContent = descriptions[status.state] || "";
+    renderServerUpdate(status);
     $("updateServer").disabled = !status.enabled || ["queued", "running"].includes(status.state);
-    $("updateServer").title = status.enabled ? "Обновить ARC Hub из проверенного репозитория" :
-      "Требуется установка systemd-службы обновлений на VDS";
+    $("updateServer").title = status.enabled
+      ? "Запустить обновление из GitHub с резервной копией"
+      : "Служба arc-update.path ещё не установлена на VDS";
   } catch (err) {
+    // During systemd restart the HTTP listener temporarily disappears.
+    // Keep the last known progress rather than erasing it.
+    $("serverUpdateState").textContent = "Ожидание восстановления связи с ARC Hub…";
     $("updateServer").disabled = true;
-    notify("Не удалось получить статус сервера: " + err.message, true);
+  } finally {
+    updatePollBusy = false;
   }
 }
 
@@ -469,10 +525,11 @@ $("updateServer").addEventListener("click", async () => {
   try {
     const result = await api("/web/api/server/update", "POST");
     notify(result.detail || "Обновление поставлено в очередь");
+    sessionStorage.setItem("arcUpdateInProgress", "1");
     $("updateServer").disabled = true;
-    $("serverUpdateState").hidden = false;
-    $("serverUpdateState").textContent =
-      "Обновление запущено; после перезапуска обновите страницу и войдите снова.";
+    renderServerUpdate({state: "queued", step: "queued", percent: 0,
+      detail: "Запрос отправлен системной службе ARC Hub"});
+    await refreshServerUpdate();
   } catch (err) { notify(err.message, true); }
 });
 

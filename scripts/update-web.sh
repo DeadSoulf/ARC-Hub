@@ -9,6 +9,9 @@ TEMP=""
 BACKUP=""
 CHANGED=0
 err() { printf 'ARC UPDATE ERROR: %s\n' "$*" >&2; exit 1; }
+# The privileged runner observes ONLY these constant stage markers; never
+# forward untrusted git/test output or credentials into the browser.
+progress() { printf 'ARC_PROGRESS:%s\n' "$1"; }
 # systemd restart returns before the Python HTTP listener is necessarily ready.
 # Wait for actual HTTP success, not merely the systemd Active state.
 wait_for_http() {
@@ -27,6 +30,7 @@ wait_for_http() {
 cleanup() {
   status=$?
   if ((status != 0 && CHANGED == 1)); then
+    progress rollback
     echo "ARC: update failed; restoring backed-up Hub and Caddy configuration" >&2
     cp -a "$BACKUP/arc_hub.py" "$ROOT/arc_hub.py" || true
     if [[ -f "$BACKUP/arc_web.py" ]]; then cp -a "$BACKUP/arc_web.py" "$ROOT/arc_web.py"; else rm -f "$ROOT/arc_web.py"; fi
@@ -42,6 +46,7 @@ cleanup() {
   [[ -z "$TEMP" ]] || rm -rf -- "$TEMP"
 }
 trap cleanup EXIT
+progress prepare
 [[ "$(id -u)" -eq 0 ]] || err "run through sudo"
 [[ -f "$REGISTRY" && -f "$ROOT/arc_hub.py" ]] || err "ARC Hub must already be installed"
 [[ -f "$SITE" ]] || err "Caddyfile not found"
@@ -61,12 +66,14 @@ fi
 domain="$(awk '$1 ~ /^[a-zA-Z0-9-]+(\.[a-zA-Z0-9-]+)+$/ && $2=="{" {print $1}' "$SITE" | head -n 1)"
 [[ "$domain" =~ ^[a-zA-Z0-9-]+(\.[a-zA-Z0-9-]+)+$ ]] || err "invalid ARC DNS domain"
 
+progress download
 TEMP="$(mktemp -d /tmp/arc-web-upgrade.XXXXXXXX)"
 git -c advice.detachedHead=false clone --quiet --depth 1 --branch main \
   https://github.com/DeadSoulf/ARC-Hub.git "$TEMP/repo" || err "GitHub checkout failed"
 for p in vds/arc_hub.py vds/arc_web.py vds/arc_pairing.py vds/web/index.html vds/web/app.css vds/web/app.js vds/arc-update.path vds/arc-update.service vds/arc-update-runner.sh scripts/update-web.sh; do
   [[ -f "$TEMP/repo/$p" ]] || err "missing $p in GitHub checkout"
 done
+progress test
 ( cd "$TEMP/repo" &&
   python3 -m unittest discover -s tests -p 'test_*.py' -q &&
   python3 -m py_compile vds/arc_hub.py vds/arc_web.py )
@@ -79,6 +86,7 @@ $domain {
 EOF
 caddy validate --config "$TEMP/Caddyfile" --adapter caddyfile >/dev/null ||
   err "invalid Caddyfile; nothing installed"
+progress backup
 BACKUP="/var/backups/arc/arc-web-$(date +%Y%m%d-%H%M%S)"
 install -d -m 0700 "$BACKUP"
 cp -a "$ROOT/arc_hub.py" "$BACKUP/arc_hub.py"
@@ -87,6 +95,7 @@ cp -a "$ROOT/arc_hub.py" "$BACKUP/arc_hub.py"
 [[ ! -d "$ROOT/web" ]] || cp -a "$ROOT/web" "$BACKUP/web"
 cp -a "$SITE" "$BACKUP/Caddyfile"
 CHANGED=1
+progress install
 install -m 0644 "$TEMP/repo/vds/arc_hub.py" "$ROOT/arc_hub.py"
 install -m 0644 "$TEMP/repo/vds/arc_web.py" "$ROOT/arc_web.py"
 install -m 0644 "$TEMP/repo/vds/arc_pairing.py" "$ROOT/arc_pairing.py"
@@ -94,8 +103,10 @@ install -d -m 0755 "$ROOT/web"
 install -m 0644 "$TEMP/repo/vds/web/index.html" "$TEMP/repo/vds/web/app.css" \
   "$TEMP/repo/vds/web/app.js" "$ROOT/web/"
 install -m 0644 "$TEMP/Caddyfile" "$SITE"
+progress restart
 systemctl restart arc-hub
 # Python HTTP server may need several seconds after systemd marks it active.
+progress health
 if ! wait_for_http http://127.0.0.1:8877/healthz 30 "new ARC Hub"; then
   echo "ARC: systemd status and recent Python logs:" >&2
   systemctl --no-pager --full status arc-hub >&2 || true
@@ -105,6 +116,7 @@ fi
 if ! wait_for_http http://127.0.0.1:8877/web/ 10 "ARC Web"; then
   err "web HTML is not served; rolling back"
 fi
+progress service
 systemctl reload caddy
 # Install an owner-triggered, root-owned fixed updater. The browser never runs shell.
 install -d -o arc-hub -g arc-hub -m 0700 /var/lib/arc-hub/updates
@@ -124,6 +136,7 @@ if ! wait_for_http http://127.0.0.1:8877/healthz 30 "ARC Hub with update permiss
   err "ARC Hub did not become ready after systemd unit refresh; rolling back"
 fi
 systemctl enable --now arc-update.path
+progress complete
 CHANGED=0
 echo "ARC_WEB_READY https://$domain/web/"
 echo "Owner login: owner. Private credential file: /etc/arc/owner-credentials.json"

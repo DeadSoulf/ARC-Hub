@@ -328,6 +328,10 @@ class Handler(BaseHTTPRequestHandler):
             return web_get(self, path)
         if path == "/healthz":
             return self.send_obj(200, {"status": "ok", "service": "arc-hub"})
+        if path == "/mcp":
+            # Streamable HTTP transport without server-initiated SSE.
+            return self.send_obj(405, {"error": "GET unsupported; use POST"},
+                                 [("Allow", "POST")])
         if path != "/agent/poll":
             return self.send_obj(404, {"error": "not found"})
         if not self.check_agent():

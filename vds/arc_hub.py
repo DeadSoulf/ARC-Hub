@@ -387,7 +387,7 @@ class Handler(BaseHTTPRequestHandler):
                     "initialize", "ping", "tools/list", "notifications/initialized"):
                 challenge = self.server.oauth.challenge()
                 if method == "tools/call":
-                    challenge = challenge[:-1] + (
+                    challenge = challenge + (
                         ', error="invalid_token", error_description="Sign in to ARC Hub"')
                     return self.send_obj(200, {"jsonrpc": "2.0", "id": ident,
                         "result": {"isError": True,

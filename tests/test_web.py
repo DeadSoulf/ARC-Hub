@@ -148,6 +148,40 @@ class WebTests(unittest.TestCase):
         status, _, _ = self.request("/web/api/me", cookie=child)
         self.assertEqual(status, 401)
 
+    def test_owner_can_enable_and_revoke_app_launch_for_one_device(self):
+        owner, csrf = self.login()
+        code, _, _ = self.request("/web/api/devices/apps", {
+            "csrf": csrf, "device_id": "asus",
+            "confirm_name": "Wrong device", "enabled": True
+        }, cookie=owner)
+        self.assertEqual(code, 400)
+        code, _, result = self.request("/web/api/devices/apps", {
+            "csrf": csrf, "device_id": "asus",
+            "confirm_name": "Asus", "enabled": True
+        }, cookie=owner)
+        self.assertEqual(code, 200, result)
+        self.assertTrue(result["apps_launch"])
+        self.assertIn("apps.launch", self.hub.allowed("owner", "asus"))
+        saved = json.loads(self.path.read_text(encoding="utf-8"))
+        self.assertIn("apps.launch", saved["devices"]["asus"]["allowed_scopes"])
+        self.assertIn("apps.launch", saved["users"]["owner"]["grants"]["asus"])
+        bob, bob_csrf = self.login("bob")
+        code, _, _ = self.request("/web/api/devices/apps", {
+            "csrf": bob_csrf, "device_id": "asus",
+            "confirm_name": "Asus", "enabled": False
+        }, cookie=bob)
+        self.assertEqual(code, 403)
+        code, _, result = self.request("/web/api/devices/apps", {
+            "csrf": csrf, "device_id": "asus",
+            "confirm_name": "Asus", "enabled": False
+        }, cookie=owner)
+        self.assertEqual(code, 200)
+        self.assertFalse(result["apps_launch"])
+        self.assertNotIn("apps.launch", self.hub.allowed("owner", "asus"))
+        saved = json.loads(self.path.read_text(encoding="utf-8"))
+        self.assertNotIn("apps.launch", saved["devices"]["asus"]["allowed_scopes"])
+        self.assertNotIn("apps.launch", saved["users"]["owner"]["grants"]["asus"])
+
     def test_owner_only_update_queue(self):
         location = Path(self.temp.name) / "update-queue"
         location.mkdir()

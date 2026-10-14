@@ -14,6 +14,7 @@ import hmac
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import logging
+import os
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 import queue
@@ -61,7 +62,8 @@ def schema(name, description, props, required=()):
     return {"name": name, "description": description,
             "inputSchema": {"type": "object", "properties": props,
                             "required": list(required), "additionalProperties": False},
-            "annotations": {"readOnlyHint": name in ("arc_devices", "arc_permissions")}}
+            "annotations": {"readOnlyHint": name in ("arc_devices", "arc_permissions")},
+            "securitySchemes": [{"type": "oauth2", "scopes": ["arc:access"]}]}
 
 
 TOOLS = [
@@ -251,6 +253,14 @@ class Server(ThreadingHTTPServer):
         super().__init__(address, Handler)
         self.hub = hub
         self.web = WebState(hub, registry_path)
+        self.oauth = None
+        public_url = os.environ.get("ARC_PUBLIC_URL", "").strip()
+        if public_url:
+            from arc_oauth import OAuth
+            database = os.environ.get("ARC_OAUTH_DB") or (
+                str(Path(registry_path).with_name("oauth.sqlite3"))
+                if registry_path else ":memory:")
+            self.oauth = OAuth(hub, self.web, public_url, database)
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -260,13 +270,15 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, *_):
         pass
 
-    def send_obj(self, status, obj=None):
+    def send_obj(self, status, obj=None, extra_headers=()):
         data = json.dumps(obj, ensure_ascii=False).encode("utf-8") if obj is not None else b""
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(data)))
         self.send_header("Cache-Control", "no-store")
         self.send_header("X-Content-Type-Options", "nosniff")
+        for key, value in extra_headers:
+            self.send_header(key, value)
         self.end_headers()
         if data:
             try:
@@ -289,7 +301,9 @@ class Handler(BaseHTTPRequestHandler):
         hdr = self.headers.get("Authorization", "")
         if not hdr.startswith("Bearer "):
             return None
-        return self.server.hub.authenticate_user(hdr[7:])
+        raw = hdr[7:]
+        return (self.server.hub.authenticate_user(raw) or
+                (self.server.oauth.authenticate(raw) if self.server.oauth else None))
 
     def device_id(self):
         return parse_qs(urlsplit(self.path).query).get("device_id", [""])[0]
@@ -300,6 +314,9 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         path = urlsplit(self.path).path
+        if self.server.oauth and (path.startswith("/.well-known/oauth-")
+                                  or path.startswith("/oauth/")):
+            return self.server.oauth.get(self, path)
         if path == "/" or path.startswith("/web"):
             return web_get(self, path)
         if path == "/healthz":
@@ -312,6 +329,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         path = urlsplit(self.path).path
+        if self.server.oauth and path.startswith("/oauth/"):
+            return self.server.oauth.post(self, path)
         if path.startswith("/web/api/"):
             return web_post(self, path)
         if self.headers.get("Origin") or self.headers.get("Sec-Fetch-Site") in ("same-site", "cross-site"):
@@ -348,7 +367,9 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_obj(404, {"error": "not found"})
         principal = self.bearer_user()
         if principal is None:
-            return self.send_obj(401, {"error": "unauthorized"})
+            challenge = ([("WWW-Authenticate", self.server.oauth.challenge())]
+                         if self.server.oauth else [])
+            return self.send_obj(401, {"error": "unauthorized"}, challenge)
         try:
             payload = self.json_body()
             if not isinstance(payload, dict) or payload.get("jsonrpc") != "2.0":

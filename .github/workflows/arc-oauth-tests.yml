@@ -20,6 +20,10 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.13'
+      - name: Check deployment shell syntax
+        run: bash -n scripts/install-vds.sh scripts/update-web.sh vds/install-vds.sh
+      - name: Check Web JavaScript syntax
+        run: node --check vds/web/app.js
       - name: Compile ARC Hub Python
         run: python -m py_compile vds/arc_hub.py vds/arc_web.py vds/arc_oauth.py
       - name: Run all unit tests

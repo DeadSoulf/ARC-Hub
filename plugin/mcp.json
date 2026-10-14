@@ -2,13 +2,23 @@
   "$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
   "mcpServers": {
     "arc": {
-      "type": "http",
-      "url": "https://REPLACE-WITH-YOUR-ARC-DOMAIN/mcp",
+      "type": "streamable-http",
+      "url": "https://vpn.homeaicore.ru/mcp",
       "extensions": {
         "com.openai": {
           "auth": {
-            "type": "api_key",
-            "headerScheme": "bearer"
+            "type": "oauth",
+            "client": {
+              "mode": "dcr"
+            },
+            "authorizationServerBase": "https://vpn.homeaicore.ru",
+            "registrationUrl": "https://vpn.homeaicore.ru/oauth/register",
+            "authorizationUrl": "https://vpn.homeaicore.ru/oauth/authorize",
+            "tokenUrl": "https://vpn.homeaicore.ru/oauth/token",
+            "resource": "https://vpn.homeaicore.ru/mcp",
+            "baseScopes": [
+              "arc:access"
+            ]
           }
         }
       }

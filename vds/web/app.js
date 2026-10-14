@@ -86,6 +86,7 @@ async function bootstrap() {
     $("updateServer").hidden = state.user !== "owner";
     $("createPairCode").hidden = state.user !== "owner";
     $("removeDevice").hidden = state.user !== "owner";
+    $("toggleApps").hidden = state.user !== "owner";
     $("hubAddress").textContent = window.location.origin;
     if (updatePoller) clearInterval(updatePoller);
     updatePoller = null;
@@ -202,6 +203,10 @@ function renderDetails() {
     ["apps.launch", "input.control", "files.write", "shell.exec"].includes(s)));
   $("releaseControl").disabled = !state.control;
   $("removeDevice").disabled = !d || state.user !== "owner";
+  $("toggleApps").disabled = !d || state.user !== "owner";
+  $("toggleApps").textContent = permitted("apps.launch") ?
+    "Запретить запуск приложений" : "Разрешить запуск приложений";
+  $("openNotepad").disabled = !d?.online || !permitted("apps.launch") || !state.control;
   document.querySelectorAll("[data-tool]").forEach(b => {
     const s = b.dataset.tool === "computer_status" ? "status" : "inspect";
     b.disabled = !d?.online || !permitted(s);
@@ -393,6 +398,38 @@ $("listFiles").addEventListener("click", () => fileAction("list_directory"));
 $("readFile").addEventListener("click", () => fileAction("read_text_file"));
 $("takeControl").addEventListener("click", () => takeControl("take"));
 $("releaseControl").addEventListener("click", () => takeControl("release"));
+$("toggleApps").addEventListener("click", async () => {
+  if (state.user !== "owner") return;
+  const selected = device();
+  if (!selected) return;
+  const enabled = !permitted("apps.launch");
+  const response = prompt(
+    "Изменить доступ к запуску приложений на «" + selected.name +
+    "»? Для подтверждения введите точное имя устройства:", "");
+  if (response === null) return;
+  if (response !== selected.name) return notify("Имя устройства не совпало", true);
+  const verb = enabled ? "разрешить" : "запретить";
+  if (!confirm("Подтвердите: " + verb + " запуск приложений на " +
+               selected.name + " для ARC Hub?")) return;
+  try {
+    await api("/web/api/devices/apps", "POST", {
+      device_id: selected.device_id, confirm_name: selected.name, enabled
+    });
+    notify(enabled ? "Запуск приложений разрешён владельцу" : "Запуск приложений запрещён");
+    await refreshDevices();
+    if (state.role === "admin") await refreshUsers();
+  } catch (err) { notify(err.message, true); }
+});
+$("openNotepad").addEventListener("click", async () => {
+  if (!state.control || !permitted("apps.launch")) {
+    return notify("Для открытия Блокнота получите эксклюзивное управление", true);
+  }
+  try {
+    const result = await execute("open_notepad", {});
+    $("diagnosticOutput").textContent = prettyResult(result);
+    notify("Команда открытия Блокнота выполнена");
+  } catch (err) { notify(err.message, true); }
+});
 $("removeDevice").addEventListener("click", async () => {
   if (state.user !== "owner") return;
   const selected = device();

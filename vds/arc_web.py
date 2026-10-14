@@ -278,6 +278,45 @@ class WebState:
             self.hub.audit(acting, device_id, "device_removed", "ok")
             return result
 
+    def set_app_launch(self, acting, device_id, confirm_name, enabled):
+        """Owner-only, specifically confirmed application-launch grant.
+
+        This grants only apps.launch (plus existing status/inspect) to owner.
+        Other users keep their existing permissions and local agent must
+        independently opt in to apps before any launch can execute.
+        """
+        if acting != "owner":
+            raise PermissionError("only owner may change device policy")
+        if not isinstance(device_id, str) or not isinstance(confirm_name, str) or type(enabled) is not bool:
+            raise ValueError("device id, confirmation name and boolean required")
+        with self.lock:
+            def mutate(data):
+                device = data["devices"].get(device_id)
+                if not device or device.get("name") != confirm_name:
+                    raise ValueError("device name confirmation required")
+                allowed = set(device["allowed_scopes"])
+                if enabled:
+                    allowed.add("apps.launch")
+                    owner = data["users"]["owner"]
+                    existing = set(owner.get("grants", {}).get(device_id, []))
+                    existing.update(allowed & {"status", "inspect", "apps.launch"})
+                    owner.setdefault("grants", {})[device_id] = sorted(existing)
+                else:
+                    allowed.discard("apps.launch")
+                    for user in data["users"].values():
+                        grants = user.get("grants", {})
+                        if device_id in grants:
+                            grants[device_id] = sorted(set(grants[device_id]) - {"apps.launch"})
+                device["allowed_scopes"] = sorted(allowed)
+                return {"device_id": device_id, "apps_launch": enabled,
+                        "allowed_scopes": device["allowed_scopes"]}
+            result = self._mutate_registry(mutate)
+            with self.hub.lock:
+                self.hub.devices[device_id]["allowed_scopes"] = result["allowed_scopes"]
+            self.hub.audit(acting, device_id, "device_apps_policy",
+                           "enabled" if enabled else "disabled")
+            return result
+
     def create_user(self, acting, name, role):
         if not self.is_admin(acting) or not isinstance(name, str) or not USER_NAME.fullmatch(name):
             raise PermissionError("administrator or valid username required")
@@ -347,7 +386,9 @@ def _send(handler, status, body, kind="application/json; charset=utf-8", cookie=
         "img-src 'self' data:; connect-src 'self'; form-action 'self'; "
         "base-uri 'none'; frame-ancestors 'none'")
     if cookie:
-        handler.send_header("Set-Cookie", cookie)
+        cookies = [cookie] if isinstance(cookie, str) else cookie
+        for one_cookie in cookies:
+            handler.send_header("Set-Cookie", one_cookie)
     if redirect:
         handler.send_header("Location", redirect)
     handler.end_headers()
@@ -426,7 +467,7 @@ def handle_post(handler, path):
                     "/web/api/control", "/web/api/users/create",
                     "/web/api/users/grant", "/web/api/users/enabled",
                     "/web/api/pairing/create",
-                    "/web/api/devices/remove",
+                    "/web/api/devices/remove", "/web/api/devices/apps",
                     "/web/api/server/update"):
         return _error(handler, 404, "not found")
     # Browsers send Origin; require it to match the external HTTPS host.
@@ -467,11 +508,16 @@ def handle_post(handler, path):
             result = web.remove_device(user, body.get("device_id"),
                                        body.get("confirm_name"))
             return _send(handler, 200, result)
+        if path == "/web/api/devices/apps":
+            result = web.set_app_launch(user, body.get("device_id"),
+                                        body.get("confirm_name"), body.get("enabled"))
+            return _send(handler, 200, result)
         if path == "/web/api/logout":
             web.logout(handler.headers.get("Cookie"))
             web.hub.audit(user, "-", "web_logout", "ok")
             return _send(handler, 200, {"ok": True},
-                         cookie="arc_session=; Path=/web; HttpOnly; Secure; SameSite=Strict; Max-Age=0")
+                         cookie=["arc_session=; Path=/web; HttpOnly; Secure; SameSite=Strict; Max-Age=0",
+                                 "arc_session=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0"])
         if path == "/web/api/call":
             tool, dev, args = body.get("tool"), body.get("device_id"), body.get("arguments", {})
             if not isinstance(args, dict) or len(json.dumps(args)) > 24_000:

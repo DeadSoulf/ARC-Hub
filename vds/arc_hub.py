@@ -14,6 +14,7 @@ import hmac
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import logging
+import os
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 import queue
@@ -61,7 +62,8 @@ def schema(name, description, props, required=()):
     return {"name": name, "description": description,
             "inputSchema": {"type": "object", "properties": props,
                             "required": list(required), "additionalProperties": False},
-            "annotations": {"readOnlyHint": name in ("arc_devices", "arc_permissions")}}
+            "annotations": {"readOnlyHint": name in ("arc_devices", "arc_permissions")},
+            "securitySchemes": [{"type": "oauth2", "scopes": ["arc:access"]}]}
 
 
 TOOLS = [
@@ -251,6 +253,14 @@ class Server(ThreadingHTTPServer):
         super().__init__(address, Handler)
         self.hub = hub
         self.web = WebState(hub, registry_path)
+        self.oauth = None
+        public_url = os.environ.get("ARC_PUBLIC_URL", "").strip()
+        if public_url:
+            from arc_oauth import OAuth
+            database = os.environ.get("ARC_OAUTH_DB") or (
+                str(Path(registry_path).with_name("oauth.sqlite3"))
+                if registry_path else ":memory:")
+            self.oauth = OAuth(hub, self.web, public_url, database)
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -260,13 +270,15 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, *_):
         pass
 
-    def send_obj(self, status, obj=None):
+    def send_obj(self, status, obj=None, extra_headers=()):
         data = json.dumps(obj, ensure_ascii=False).encode("utf-8") if obj is not None else b""
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(data)))
         self.send_header("Cache-Control", "no-store")
         self.send_header("X-Content-Type-Options", "nosniff")
+        for key, value in extra_headers:
+            self.send_header(key, value)
         self.end_headers()
         if data:
             try:
@@ -289,7 +301,16 @@ class Handler(BaseHTTPRequestHandler):
         hdr = self.headers.get("Authorization", "")
         if not hdr.startswith("Bearer "):
             return None
-        return self.server.hub.authenticate_user(hdr[7:])
+        raw = hdr[7:]
+        if self.server.oauth:
+            principal = self.server.oauth.authenticate(raw)
+            if principal is not None:
+                return principal
+            # Old long-lived user bearer credentials must not bypass OAuth
+            # once public OAuth is enabled. Explicit migration override only.
+            if os.environ.get("ARC_OAUTH_ALLOW_LEGACY_BEARER") != "1":
+                return None
+        return self.server.hub.authenticate_user(raw)
 
     def device_id(self):
         return parse_qs(urlsplit(self.path).query).get("device_id", [""])[0]
@@ -300,10 +321,17 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         path = urlsplit(self.path).path
+        if self.server.oauth and (path.startswith("/.well-known/oauth-")
+                                  or path.startswith("/oauth/")):
+            return self.server.oauth.get(self, path)
         if path == "/" or path.startswith("/web"):
             return web_get(self, path)
         if path == "/healthz":
             return self.send_obj(200, {"status": "ok", "service": "arc-hub"})
+        if path == "/mcp":
+            # Streamable HTTP transport without server-initiated SSE.
+            return self.send_obj(405, {"error": "GET unsupported; use POST"},
+                                 [("Allow", "POST")])
         if path != "/agent/poll":
             return self.send_obj(404, {"error": "not found"})
         if not self.check_agent():
@@ -312,6 +340,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         path = urlsplit(self.path).path
+        if self.server.oauth and path.startswith("/oauth/"):
+            return self.server.oauth.post(self, path)
         if path.startswith("/web/api/"):
             return web_post(self, path)
         if self.headers.get("Origin") or self.headers.get("Sec-Fetch-Site") in ("same-site", "cross-site"):
@@ -347,19 +377,42 @@ class Handler(BaseHTTPRequestHandler):
         if path != "/mcp":
             return self.send_obj(404, {"error": "not found"})
         principal = self.bearer_user()
-        if principal is None:
+        if principal is None and self.server.oauth is None:
             return self.send_obj(401, {"error": "unauthorized"})
+        # Before authentication, cap MCP discovery payloads. Large writes
+        # and device results are accepted only through authenticated paths.
+        if principal is None:
+            try:
+                unauth_size = int(self.headers.get("Content-Length", "-1"))
+            except ValueError:
+                unauth_size = -1
+            if not 0 <= unauth_size <= 8192:
+                return self.send_obj(413, {"error": "unauthenticated MCP body too large"})
         try:
             payload = self.json_body()
             if not isinstance(payload, dict) or payload.get("jsonrpc") != "2.0":
                 raise ValueError("JSON-RPC 2.0 required")
             method = payload.get("method")
             ident = payload.get("id")
+            # ChatGPT discovers tools before OAuth. Only harmless discovery
+            # methods may be used anonymously; device actions NEVER may.
+            if principal is None and method not in (
+                    "initialize", "ping", "tools/list", "notifications/initialized"):
+                challenge = self.server.oauth.challenge()
+                if method == "tools/call":
+                    challenge = challenge + (
+                        ', error="invalid_token", error_description="Sign in to ARC Hub"')
+                    return self.send_obj(200, {"jsonrpc": "2.0", "id": ident,
+                        "result": {"isError": True,
+                                   "content": [{"type": "text", "text": "ARC authorization required"}],
+                                   "_meta": {"mcp/www_authenticate": [challenge]}}})
+                return self.send_obj(401, {"error": "unauthorized"},
+                                     [("WWW-Authenticate", challenge)])
             if method == "notifications/initialized":
                 return self.send_obj(202)
             if method == "initialize":
                 out = {"protocolVersion": "2025-03-26",
-                       "serverInfo": {"name": "arc", "version": "0.2.0"},
+                       "serverInfo": {"name": "arc", "version": "0.3.0"},
                        "capabilities": {"tools": {"listChanged": False}}}
             elif method == "ping":
                 out = {}

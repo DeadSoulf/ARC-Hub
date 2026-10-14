@@ -1,18 +1,28 @@
-# ARC Plugin (short name)
+# ARC ChatGPT plugin — OAuth 2.1 PKCE
 
-The actual ChatGPT plugin currently connected as "AI Remote Commander Local"
-is NOT modified, so Asus access is preserved.
+The private ARC plugin connects to https://vpn.homeaicore.ru/mcp using
+**OAuth Dynamic Client Registration (DCR)**, not a shared API key.
 
-This is the **ARC** v0.2 manifest template, not a connected plugin.
-Replace HTTPS hostname with the real VDS domain, deploy ARC Hub, verify
-certificates and permissions, and then register a new private ChatGPT plugin.
+The HUB must first be updated to a version with arc_oauth.py and
+ARC_PUBLIC_URL=https://vpn.homeaicore.ru in /etc/arc/oauth.env.
 
-The prototype supports independent user bearer credentials; each user must
-configure their own connection/token. NEVER use an owner/admin bearer token
-in a shared workspace plugin. For a single shared plugin with individual
-sign-in, add standards-compliant OAuth 2.1 / OIDC to ARC Hub (authorization
-server discovery, PKCE S256, issuer/audience validation and short-lived
-access tokens), and update mcp.json auth from api_key to oauth.
+1. Confirm GET /.well-known/oauth-protected-resource and
+   GET /.well-known/oauth-authorization-server respond with metadata.
+2. Update the private ARC plugin with the OAuth MCP config.
+3. Reconnect ARC in ChatGPT. You will be redirected to ARC Hub's own sign-in
+   page, where you use a personal ARC account and explicitly approve ChatGPT.
+4. Grant that account only the intended device-specific scopes in ARC Web.
+5. For Asus Notepad, grant "apps.launch" in ARC Web (user and device)
+   AND enable "apps" in the Windows agent's local permissions.
+6. Test arc_devices, arc_permissions, arc_take_control, arc_call using
+   open_notepad or open_application, and finally arc_release_control.
+7. Keep Desktop Commander until the entire MCP path is verified end to end.
 
-Current routes: arc_devices, arc_permissions, arc_take_control,
-arc_release_control, arc_call. Every computer operation requires device_id.
+No static owner or device bearer token belongs in plugin files or git.
+Authorization codes are single-use and bound to the S256 challenge.
+Refresh tokens are stored hashed and rotated; access tokens are short-lived.
+The HUB validates the user, target resource, device grants and control lease.
+
+The Web UI may ask for your personal ARC token during initial OAuth consent.
+Do not paste this token into a chat; enter it only on your verified
+https://vpn.homeaicore.ru site over HTTPS.

@@ -35,8 +35,12 @@ cleanup() {
     cp -a "$BACKUP/arc_hub.py" "$ROOT/arc_hub.py" || true
     if [[ -f "$BACKUP/arc_web.py" ]]; then cp -a "$BACKUP/arc_web.py" "$ROOT/arc_web.py"; else rm -f "$ROOT/arc_web.py"; fi
     if [[ -f "$BACKUP/arc_pairing.py" ]]; then cp -a "$BACKUP/arc_pairing.py" "$ROOT/arc_pairing.py"; else rm -f "$ROOT/arc_pairing.py"; fi
+    if [[ -f "$BACKUP/arc_oauth.py" ]]; then cp -a "$BACKUP/arc_oauth.py" "$ROOT/arc_oauth.py"; else rm -f "$ROOT/arc_oauth.py"; fi
+    if [[ -f "$BACKUP/oauth.env" ]]; then cp -a "$BACKUP/oauth.env" /etc/arc/oauth.env; else rm -f /etc/arc/oauth.env; fi
+    if [[ -f "$BACKUP/arc-hub.service" ]]; then cp -a "$BACKUP/arc-hub.service" /etc/systemd/system/arc-hub.service; fi
     if [[ -d "$BACKUP/web" ]]; then cp -a "$BACKUP/web" "$ROOT/"; else rm -rf "$ROOT/web"; fi
     cp -a "$BACKUP/Caddyfile" "$SITE" || true
+    systemctl daemon-reload || true
     systemctl restart arc-hub || true
     if ! wait_for_http http://127.0.0.1:8877/healthz 30 "rollback ARC Hub"; then
       echo "ARC: rollback did not restore the HTTP service; inspect journalctl -u arc-hub -n 80" >&2
@@ -70,13 +74,13 @@ progress download
 TEMP="$(mktemp -d /tmp/arc-web-upgrade.XXXXXXXX)"
 git -c advice.detachedHead=false clone --quiet --depth 1 --branch main \
   https://github.com/DeadSoulf/ARC-Hub.git "$TEMP/repo" || err "GitHub checkout failed"
-for p in vds/arc_hub.py vds/arc_web.py vds/arc_pairing.py vds/web/index.html vds/web/app.css vds/web/app.js vds/arc-update.path vds/arc-update.service vds/arc-update-runner.sh scripts/update-web.sh; do
+for p in vds/arc_hub.py vds/arc_oauth.py vds/arc_web.py vds/arc_pairing.py vds/web/index.html vds/web/app.css vds/web/app.js vds/arc-update.path vds/arc-update.service vds/arc-update-runner.sh scripts/update-web.sh; do
   [[ -f "$TEMP/repo/$p" ]] || err "missing $p in GitHub checkout"
 done
 progress test
 ( cd "$TEMP/repo" &&
   python3 -m unittest discover -s tests -p 'test_*.py' -q &&
-  python3 -m py_compile vds/arc_hub.py vds/arc_web.py )
+  python3 -m py_compile vds/arc_hub.py vds/arc_oauth.py vds/arc_web.py )
 if command -v node >/dev/null; then node --check "$TEMP/repo/vds/web/app.js"; fi
 cat > "$TEMP/Caddyfile" <<EOF
 # Managed by ARC Hub installer (ARC Web enabled)
@@ -92,6 +96,9 @@ install -d -m 0700 "$BACKUP"
 cp -a "$ROOT/arc_hub.py" "$BACKUP/arc_hub.py"
 [[ ! -f "$ROOT/arc_web.py" ]] || cp -a "$ROOT/arc_web.py" "$BACKUP/arc_web.py"
 [[ ! -f "$ROOT/arc_pairing.py" ]] || cp -a "$ROOT/arc_pairing.py" "$BACKUP/arc_pairing.py"
+[[ ! -f "$ROOT/arc_oauth.py" ]] || cp -a "$ROOT/arc_oauth.py" "$BACKUP/arc_oauth.py"
+[[ ! -f /etc/arc/oauth.env ]] || cp -a /etc/arc/oauth.env "$BACKUP/oauth.env"
+[[ ! -f /etc/systemd/system/arc-hub.service ]] || cp -a /etc/systemd/system/arc-hub.service "$BACKUP/arc-hub.service"
 [[ ! -d "$ROOT/web" ]] || cp -a "$ROOT/web" "$BACKUP/web"
 cp -a "$SITE" "$BACKUP/Caddyfile"
 CHANGED=1
@@ -99,10 +106,19 @@ progress install
 install -m 0644 "$TEMP/repo/vds/arc_hub.py" "$ROOT/arc_hub.py"
 install -m 0644 "$TEMP/repo/vds/arc_web.py" "$ROOT/arc_web.py"
 install -m 0644 "$TEMP/repo/vds/arc_pairing.py" "$ROOT/arc_pairing.py"
+install -m 0644 "$TEMP/repo/vds/arc_oauth.py" "$ROOT/arc_oauth.py"
 install -d -m 0755 "$ROOT/web"
 install -m 0644 "$TEMP/repo/vds/web/index.html" "$TEMP/repo/vds/web/app.css" \
   "$TEMP/repo/vds/web/app.js" "$ROOT/web/"
 install -m 0644 "$TEMP/Caddyfile" "$SITE"
+# Domain came from a validated, ARC-managed Caddyfile. No token is stored here.
+printf 'ARC_PUBLIC_URL=https://%s
+' "$domain" > /etc/arc/oauth.env
+chown root:arc-hub /etc/arc/oauth.env
+chmod 0640 /etc/arc/oauth.env
+# Make the updated unit load ARC_PUBLIC_URL before restarting the service.
+install -m 0644 "$TEMP/repo/vds/arc-hub.service" /etc/systemd/system/arc-hub.service
+systemctl daemon-reload
 progress restart
 systemctl restart arc-hub
 # Python HTTP server may need several seconds after systemd marks it active.
@@ -115,6 +131,9 @@ if ! wait_for_http http://127.0.0.1:8877/healthz 30 "new ARC Hub"; then
 fi
 if ! wait_for_http http://127.0.0.1:8877/web/ 10 "ARC Web"; then
   err "web HTML is not served; rolling back"
+fi
+if ! curl --fail --silent --max-time 5 http://127.0.0.1:8877/.well-known/oauth-authorization-server | python3 -c 'import json,sys; j=json.load(sys.stdin); assert j["code_challenge_methods_supported"]==["S256"] and j["issuer"].startswith("https://")'; then
+  err "OAuth discovery is unhealthy; rolling back"
 fi
 progress service
 systemctl reload caddy

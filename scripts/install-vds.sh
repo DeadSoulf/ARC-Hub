@@ -86,11 +86,17 @@ TMP="$(mktemp -d /tmp/arc-install.XXXXXXXX)"
 info "downloading ARC Hub ref $REF"
 git -c advice.detachedHead=false clone --quiet --depth 1 --branch "$REF" "$REPO" "$TMP/repo" ||
   fail "GitHub clone failed (ref=$REF)"
-for file in arc_hub.py arc_admin.py arc_web.py arc_pairing.py web/index.html web/app.css web/app.js arc-hub.service install-vds.sh; do
+for file in arc_hub.py arc_oauth.py arc_admin.py arc_web.py arc_pairing.py web/index.html web/app.css web/app.js arc-hub.service install-vds.sh; do
   [[ -f "$TMP/repo/vds/$file" ]] || fail "downloaded repo missing vds/$file"
 done
 info "installing ARC Hub service"
 ( cd "$TMP/repo/vds" && bash ./install-vds.sh )
+# The issuer is the validated operator-selected domain. No owner credentials are copied.
+printf 'ARC_PUBLIC_URL=https://%s
+' "$DOMAIN" > /etc/arc/oauth.env
+chown root:arc-hub /etc/arc/oauth.env
+chmod 0640 /etc/arc/oauth.env
+systemctl restart arc-hub
 systemctl is-active --quiet arc-hub || fail "ARC Hub service did not start"
 curl --fail --silent --show-error --max-time 5 http://127.0.0.1:8877/healthz >/dev/null ||
   fail "ARC Hub local health check failed"
@@ -120,5 +126,5 @@ info "public URL: https://$DOMAIN"
 info "TLS requires correct DNS and inbound TCP ports 80 and 443"
 info "owner credentials stored privately at /etc/arc/owner-credentials.json"
 info "DO NOT publish credentials in GitHub, ChatGPT or terminal logs"
-info "Shared ChatGPT sign-in requires OAuth/OIDC (not yet implemented)"
+info "ARC OAuth PKCE enabled: sign in using your individual ARC account"
 printf '\nCheck: curl -i -X POST https://%s/mcp  # expect 401 until authorized\n' "$DOMAIN"

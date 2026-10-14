@@ -114,6 +114,12 @@ install -m 0644 "$TEMP/repo/vds/arc-update.path" "$TEMP/repo/vds/arc-update.serv
 install -m 0644 "$TEMP/repo/vds/arc-hub.service" /etc/systemd/system/
 ( cd "$TEMP/repo" && git rev-parse --short=12 HEAD ) > /opt/arc/REVISION
 systemctl daemon-reload
+# Reload ARC Hub once more so the new systemd sandbox ReadWritePaths
+# includes /var/lib/arc-hub/updates; otherwise the browser cannot queue jobs.
+systemctl restart arc-hub
+if ! wait_for_http http://127.0.0.1:8877/healthz 30 "ARC Hub with update permissions"; then
+  err "ARC Hub did not become ready after systemd unit refresh; rolling back"
+fi
 systemctl enable --now arc-update.path
 CHANGED=0
 echo "ARC_WEB_READY https://$domain/web/"

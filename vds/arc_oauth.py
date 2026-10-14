@@ -353,8 +353,14 @@ class OAuth:
             form = self._body(handler, "application/x-www-form-urlencoded")
             grant, client, resource = (_one(form, "grant_type"), _one(form, "client_id"),
                                       _one(form, "resource"))
-            if not client or not self._client(client) or resource != self.resource:
+            if not client or not self._client(client):
                 return self._error(handler, 400, "invalid_client")
+            # Authorization codes require the exact MCP resource. Refresh
+            # tokens are already audience-bound in the database; allow a
+            # missing resource on refresh, but never another resource.
+            if (grant == "authorization_code" and resource != self.resource) or (
+                    grant == "refresh_token" and resource not in (None, self.resource)):
+                return self._error(handler, 400, "invalid_target")
             with self.lock, self.db:
                 self._cleanup()
                 if grant == "authorization_code":
@@ -396,7 +402,7 @@ class OAuth:
                 if (not account or not account.get("enabled", True)
                         or not hmac.compare_digest(account["token_hash"], credential)):
                     return self._error(handler, 400, "invalid_grant")
-                result = self._issue_tokens(client, user, credential, resource, scope)
+                result = self._issue_tokens(client, user, credential, self.resource, scope)
             return self._respond(handler, 200, result)
         except (ValueError, TypeError, UnicodeError):
             return self._error(handler, 400, "invalid_request")

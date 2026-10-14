@@ -2,7 +2,7 @@ name: Build single-file ARC Agent EXE
 
 on:
   push:
-    branches: [main]
+    branches: ["**"]
   workflow_dispatch:
 
 permissions:
@@ -30,8 +30,15 @@ jobs:
       - name: Smoke-test bundled modules
         shell: pwsh
         run: |
-          & ".\dist\ARC-Agent-Setup.exe" --self-test
-          if ($LASTEXITCODE -ne 0) { throw "Frozen ARC Agent self-test failed" }
+          # The bundle is a GUI-subsystem EXE. PowerShell & can return before it
+          # finishes; Start-Process -Wait returns its actual exit code.
+          $binary = (Resolve-Path ".\dist\ARC-Agent-Setup.exe").Path
+          $proc = Start-Process -FilePath $binary -ArgumentList "--self-test" -Wait -PassThru
+          if ($proc.ExitCode -ne 0) {
+            $log = Join-Path $env:LOCALAPPDATA "ARC\logs\setup-error.log"
+            if (Test-Path $log) { Get-Content $log -Tail 35 }
+            throw "Frozen ARC Agent self-test failed: exit $($proc.ExitCode)"
+          }
       - name: Generate SHA-256 checksum
         shell: pwsh
         run: |

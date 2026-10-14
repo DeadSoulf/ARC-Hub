@@ -195,12 +195,21 @@ class OAuth:
             if body.get("response_types", ["code"]) != ["code"]:
                 raise ValueError("unsupported response type")
             with self.lock, self.db:
-                count = self.db.execute("SELECT COUNT(*) FROM clients").fetchone()[0]
-                if count >= 256:
-                    raise ValueError("client registrations full")
-                client = "arc_" + secrets.token_urlsafe(24)
-                self.db.execute("INSERT INTO clients VALUES(?,?,?)",
-                                (client, json.dumps(redirects), int(time.time())))
+                # Reuse DCR public client identity for identical allowed
+                # redirect URIs, preventing trivial registration exhaustion.
+                canonical = json.dumps(sorted(redirects))
+                existing = self.db.execute(
+                    "SELECT id FROM clients WHERE redirects=? LIMIT 1",
+                    (canonical,)).fetchone()
+                if existing:
+                    client = existing[0]
+                else:
+                    count = self.db.execute("SELECT COUNT(*) FROM clients").fetchone()[0]
+                    if count >= 256:
+                        raise ValueError("client registrations full")
+                    client = "arc_" + secrets.token_urlsafe(24)
+                    self.db.execute("INSERT INTO clients VALUES(?,?,?)",
+                                    (client, canonical, int(time.time())))
             return self._respond(handler, 201, {
                 "client_id": client, "client_id_issued_at": int(time.time()),
                 "client_name": "ChatGPT ARC",

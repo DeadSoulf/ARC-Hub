@@ -17,6 +17,7 @@ import socket
 import subprocess
 import sys
 import uuid
+from urllib.parse import urlsplit
 
 VERSION = "0.3.0-preview"
 BASE = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "ARC"
@@ -123,6 +124,56 @@ def install_agent() -> str:
     )
 
 
+def enroll_agent(enrollment_file: str) -> str:
+    """Apply device-scoped credentials with the same EXE, without a .ps1 script."""
+    if not CONFIG.is_file():
+        raise RuntimeError("Install ARC Agent on this PC before enrollment")
+    cfg = json.loads(CONFIG.read_text(encoding="utf-8-sig"))
+    payload = json.loads(Path(enrollment_file).read_text(encoding="utf-8-sig"))
+    if not isinstance(payload, dict):
+        raise ValueError("Enrollment JSON must contain an object")
+    device_id = payload.get("device_id")
+    token = payload.get("device_token")
+    address = payload.get("gateway_url")
+    if not (isinstance(device_id, str) and device_id == cfg.get("device_id")):
+        raise ValueError("Wrong device_id: enrollment belongs to another computer")
+    if not isinstance(token, str) or len(token) < 48 or len(token) > 512:
+        raise ValueError("Invalid device credential")
+    if not isinstance(address, str):
+        raise ValueError("Invalid gateway URL")
+    u = urlsplit(address)
+    if u.scheme != "https" or not u.hostname or u.username or u.password or u.query or u.fragment:
+        raise ValueError("Only HTTPS ARC Hub URLs without embedded credentials are accepted")
+    if cfg.get("device_token") and cfg["device_token"] != token:
+        raise ValueError("Already registered with different credentials; ask administrator to revoke the old enrollment")
+    cfg["gateway_url"] = address.rstrip("/")
+    cfg["device_token"] = token
+    if isinstance(payload.get("name"), str) and len(payload["name"]) <= 128:
+        cfg["name"] = payload["name"]
+    # Restrict new secret file before atomic replacement.
+    temporary = CONFIG.with_name("agent.json.enrolling")
+    with temporary.open("x", encoding="utf-8") as file:
+        json.dump(cfg, file, ensure_ascii=False, indent=2)
+        file.flush()
+        os.fsync(file.fileno())
+    try:
+        user = os.environ.get("USERDOMAIN", "") + "\\" + os.environ.get("USERNAME", "")
+        result = subprocess.run(
+            ["icacls.exe", str(temporary), "/inheritance:r",
+             "/grant:r", user + ":(F)"],
+            capture_output=True, timeout=10,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        if result.returncode != 0:
+            raise RuntimeError("Unable to secure enrollment file permissions")
+        os.replace(temporary, CONFIG)
+    finally:
+        if temporary.exists():
+            temporary.unlink()
+    return ("ARC Agent connected to " + cfg["gateway_url"] + "\n"
+            "Keep the enrollment token private and delete the transferred JSON copy.")
+
+
 def remove_task() -> str:
     result = local_task(
         "Stop-ScheduledTask -TaskName 'ARC Agent' -ErrorAction SilentlyContinue;"
@@ -140,7 +191,7 @@ def gui():
 
     window = tk.Tk()
     window.title("ARC Agent — Setup")
-    window.geometry("430x310")
+    window.geometry("470x390")
     window.resizable(False, False)
     window.configure(bg="#121e2e")
 
@@ -171,6 +222,21 @@ def gui():
         side="left", padx=7)
     ttk.Button(row, text="Отключить автозапуск", command=lambda: action(remove_task)).pack(
         side="left", padx=7)
+
+    def browse_enrollment():
+        from tkinter import filedialog
+        path = filedialog.askopenfilename(
+            title="ARC Hub: выбрать файл регистрации",
+            filetypes=[("ARC enrollment JSON", "*.json"), ("Все файлы", "*.*")],
+        )
+        if path and messagebox.askokcancel(
+            "ARC Hub",
+            "Применить секретный файл регистрации именно к этому компьютеру?"
+        ):
+            action(lambda: enroll_agent(path))
+
+    ttk.Button(window, text="Подключить к ARC Hub (файл регистрации)",
+               command=browse_enrollment).pack(pady=8)
     window.mainloop()
 
 
@@ -179,6 +245,7 @@ def main():
     parser.add_argument("--mode", choices=("supervisor", "local", "worker"))
     parser.add_argument("--install", action="store_true")
     parser.add_argument("--uninstall", action="store_true")
+    parser.add_argument("--enroll", metavar="PATH")
     parser.add_argument("--self-test", action="store_true")
     args, remainder = parser.parse_known_args()
 
@@ -208,6 +275,9 @@ def main():
         return 0
     if args.install:
         install_agent()
+        return 0
+    if args.enroll:
+        enroll_agent(args.enroll)
         return 0
     if args.uninstall:
         remove_task()

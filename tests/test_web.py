@@ -44,6 +44,10 @@ class WebTests(unittest.TestCase):
         self.server.shutdown()
         self.server.server_close()
         self.thread.join(3)
+        # Windows keeps RotatingFileHandler's audit log open until explicitly closed.
+        for handler in list(self.hub.log.handlers):
+            self.hub.log.removeHandler(handler)
+            handler.close()
         self.temp.cleanup()
 
     def request(self, path, body=None, cookie=None, origin=None):

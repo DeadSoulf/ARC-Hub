@@ -73,7 +73,7 @@ class UpdateRunnerProgressTests(unittest.TestCase):
         result, status = self.execute(failing=True)
         self.assertEqual(result.returncode, 17)
         self.assertEqual(status["state"], "failed")
-        self.assertIn("ошибкой", status["detail"])
+        self.assertIn("Ошибка обновления", status["detail"])
         self.assertEqual(status["step"], "rollback")
 
     def test_scripts_only_emit_known_stages(self):

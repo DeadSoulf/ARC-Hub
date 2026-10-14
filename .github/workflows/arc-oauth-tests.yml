@@ -1,0 +1,26 @@
+name: ARC OAuth regression tests
+
+on:
+  pull_request:
+  push:
+    branches:
+      - feat/chatgpt-oauth-pkce-20261014
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Compile ARC Hub Python
+        run: python -m py_compile vds/arc_hub.py vds/arc_web.py vds/arc_oauth.py
+      - name: Run all unit tests
+        run: python -m unittest discover -s tests -p 'test_*.py' -q

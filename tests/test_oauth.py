@@ -149,6 +149,29 @@ class OAuthTests(unittest.TestCase):
         self.assertIn("resource_metadata", error["_meta"]["mcp/www_authenticate"][0])
         self.assertIn('error="invalid_token"', error["_meta"]["mcp/www_authenticate"][0])
 
+    def test_registration_supports_refresh_and_reuses_client(self):
+        metadata = {"client_name": "ChatGPT", "redirect_uris": [self.redirect],
+                    "token_endpoint_auth_method": "none",
+                    "grant_types": ["authorization_code", "refresh_token"],
+                    "response_types": ["code"]}
+        payload = json.dumps(metadata).encode()
+        status, _, first = self.request("/oauth/register", payload, mime="application/json")
+        self.assertEqual(status, 201, first)
+        status, _, second = self.request("/oauth/register", payload, mime="application/json")
+        self.assertEqual(status, 201, second)
+        self.assertEqual(first["client_id"], second["client_id"])
+        self.assertEqual(self.oauth.db.execute("SELECT COUNT(*) FROM clients").fetchone()[0], 1)
+
+    def test_legacy_arc_bearer_does_not_bypass_oauth(self):
+        body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                           "params": {"name": "arc_devices", "arguments": {}}}).encode()
+        status, _, denied = self.request(
+            "/mcp", body, mime="application/json",
+            headers={"Authorization": "Bearer owner-" + "x" * 48})
+        self.assertEqual(status, 200)
+        self.assertTrue(denied["result"]["isError"])
+        self.assertIn("mcp/www_authenticate", denied["result"]["_meta"])
+
     def test_client_redirect_allowlist_and_flow_validation(self):
         rejected = json.dumps({"redirect_uris": ["https://evil.example/callback"]}).encode()
         status, _, body = self.request("/oauth/register", rejected, mime="application/json")

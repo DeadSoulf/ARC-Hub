@@ -191,6 +191,13 @@ function renderDetails() {
   const scopes = $("scopeList");
   scopes.replaceChildren();
   for (const scope of d?.permissions || []) scopes.append(text("span", scope, "scope"));
+  if (d?.registered_without_access) {
+    scopes.append(text("p",
+      "Компьютер уже зарегистрирован, но права владельцу ещё не выданы. " +
+      "Для диагностики настройте права в разделе «Пользователи». " +
+      "Чтобы зарегистрировать заново, удалите устройство и сбросьте привязку ARC Agent.",
+      "muted"));
+  }
   $("takeControl").disabled = !d?.online || !(d.permissions.some(s =>
     ["apps.launch", "input.control", "files.write", "shell.exec"].includes(s)));
   $("releaseControl").disabled = !state.control;

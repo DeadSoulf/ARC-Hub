@@ -206,6 +206,29 @@ class WebTests(unittest.TestCase):
         self.assertEqual(result["state"], "failed")
         self.assertEqual(result["step"], "failed")
 
+    def test_owner_sees_unassigned_registered_devices_to_delete(self):
+        # "office" exists in registry but owner has no grant. It was
+        # previously invisible in Web, blocking the removal/re-pairing flow.
+        cookie, csrf = self.login()
+        status, _, response = self.request("/web/api/devices", cookie=cookie)
+        self.assertEqual(status, 200)
+        by_id = {d["device_id"]: d for d in response["devices"]}
+        self.assertIn("office", by_id)
+        self.assertEqual(by_id["office"]["permissions"], [])
+        self.assertTrue(by_id["office"]["registered_without_access"])
+        self.assertNotIn("token_hash", str(response))
+        # Owner can remove the registration, but still may not run tools.
+        status, _, result = self.request("/web/api/call", {
+            "csrf": csrf, "device_id": "office",
+            "tool": "computer_status", "arguments": {}
+        }, cookie=cookie)
+        self.assertEqual(status, 403)
+        status, _, result = self.request("/web/api/devices/remove", {
+            "csrf": csrf, "device_id": "office", "confirm_name": "Office"
+        }, cookie=cookie)
+        self.assertEqual(status, 200, result)
+        self.assertNotIn("office", self.hub.devices)
+
     def test_owner_removes_device_and_revokes_all_grants(self):
         # A second user also has the device; removal must revoke both grants.
         self.hub.users["bob"]["grants"]["asus"] = ["status"]

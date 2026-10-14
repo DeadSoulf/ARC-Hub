@@ -185,6 +185,30 @@ class WebState:
                  "grants": data.get("grants", {})}
                 for name, data in sorted(self.hub.users.items())]
 
+    def devices_visible_to(self, name):
+        """Owners see unassigned registration records without gaining tool access.
+
+        This affects only the Web management list, not the MCP permissions.
+        The owner must still grant scopes before calling any remote tool.
+        """
+        current = self.hub.device_list(name)
+        if name != "owner":
+            return current
+        indexed = {item["device_id"] for item in current}
+        for device_id, dev in sorted(self.hub.devices.items()):
+            if device_id not in indexed:
+                current.append({
+                    "device_id": device_id,
+                    "name": dev["name"],
+                    "online": time.time() - self.hub.seen.get(device_id, 0) < 35,
+                    "permissions": [],
+                    "control_busy": bool(
+                        self.hub.leases.get(device_id, {}).get("expires", 0)
+                        > time.monotonic()),
+                    "registered_without_access": True,
+                })
+        return sorted(current, key=lambda device: device["name"].lower())
+
     def list_device_catalog(self):
         return [{"device_id": ident, "name": device["name"],
                  "allowed_scopes": device.get("allowed_scopes", [])}
@@ -371,7 +395,7 @@ def handle_get(handler, path):
         _send(handler, 200, {"user": user, "role": web.hub.users[user]["role"],
                              "csrf": sess["csrf"]})
     elif path == "/web/api/devices":
-        _send(handler, 200, {"devices": web.hub.device_list(user)})
+        _send(handler, 200, {"devices": web.devices_visible_to(user)})
     elif path == "/web/api/users":
         if not web.is_admin(user):
             return _error(handler, 403, "administrator required")

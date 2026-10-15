@@ -1,60 +1,65 @@
-# ARC Lite — минимальный вариант управления Asus из ChatGPT
+# ARC Lite — локальное управление Windows без серверов
 
-Статус: **локальный MVP на Windows проверен**, подключение из ChatGPT через Secure MCP Tunnel пока **не подтверждено**. Это самостоятельная ветка ARC-Hub: существующие ARC Hub на VDS, ARC Agent, Fleet, HOME AI Bridge и Desktop Commander не изменяются.
+## Архитектура
 
-## Упрощённая схема
+**ChatGPT Desktop (локальная сессия) / Codex CLI → локальный MCP-процесс через stdio → Windows.**
 
-ChatGPT → OpenAI Secure MCP Tunnel → `tunnel-client.exe` на Asus → `arc_lite.py` (MCP по stdio) → Windows.
+Без VDS, Docker, Caddy, браузерного HTTP, localhost HTTP, входящих портов, Secure MCP Tunnel, OAuth и отдельного сервера. `arc_lite.py` — один исполняемый Python-файл, запускаемый самим MCP-клиентом. **Никакой API-ключ для MCP не нужен.** Модель ChatGPT при этом по-прежнему работает в облаке OpenAI; если нужна работа без интернета вообще, это отдельная задача с локальной LLM.
 
-* **Не нужны:** VDS, Docker, Caddy, публичный порт, OAuth-провайдер, собственный веб-сервер, база данных, отдельный агент-воркер или входящие соединения на Windows.
-* **Нужны:** Windows 10/11 с Python 3.11+; официальный проверенный `tunnel-client.exe`; приватный Platform Tunnel ID; Restricted Runtime API Key с доступом Tunnels Read + Use; разрешение ChatGPT создавать приватные MCP-плагины.
-* **Важно:** туннель и пользовательский ChatGPT workspace должны быть связаны в Platform. Нельзя считать подключение состоявшимся по локальному self-test.
+**Веб-чат не может сам запустить локальный stdio-процесс.** Нужен ChatGPT Desktop с локальной сессией (или Codex CLI/IDE); конфигурация MCP у них общая. Документация: https://learn.chatgpt.com/docs/extend/mcp
 
-## Что уже готово на Asus
+## Что сделано на Asus
 
-Исходники и PowerShell-запускатель находятся в `D:\AI\04_Workspaces\ARC-Lite-MVP`. На устройстве найден официальный `tunnel-client` 0.0.16. Вызовы `python arc_lite.py --self-test` с `--enable-apps` и без него, 6 unittest и запуск через `start.ps1 -Preflight -EnableApps` прошли.
+- Источники: `D:\AI\04_Workspaces\ARC-Lite-MVP` и `ARC-Hub/lite` в GitHub.
+- Python 3.13 и Codex CLI уже установлены, ChatGPT Desktop запущен.
+- Успешные локальные тесты `arc_lite.py --self-test`, 6 unit/stdio tests, `start.ps1 -Preflight -EnableApps`.
+- `start.ps1 -EnableApps` зарегистрировал `arc_lite` через `codex mcp add`. `codex mcp get arc_lite` подтверждает `enabled: true`, `transport: stdio`, путь к Python и локальному агенту. Конфигурация сохранена в `~/.codex/config.toml` с резервной копией.
+- Никакого туннеля, локального HTTP-сервера, автозапуска и вмешательства в ARC Hub/VDS не было.
+- Полный вызов через UI ChatGPT Desktop надо подтвердить в **новой локальной сессии**. Отдельный локальный MCP-тест не доказывает видимость в текущем веб-чате.
 
-В каталоге GitHub этот код: `lite/arc_lite.py`, `lite/start.ps1`, `lite/test_lite.py`.
+## Проверка и установка
 
-## Проверка без ключей и сети
-
-Откройте обычный PowerShell под вошедшим в Windows пользователем:
+Обычный PowerShell на Asus, без администраторских прав:
 
 ```powershell
 cd 'D:\AI\04_Workspaces\ARC-Lite-MVP'
 python -m unittest discover -s . -p test_lite.py -v
 powershell -NoProfile -ExecutionPolicy Bypass -File .\start.ps1 -Preflight -EnableApps
-```
-
-Ожидается `6 tests OK` и `ARC_LITE_PREFLIGHT_OK`. Ни одно внешнее приложение при таком preflight не запускается. В обычном режиме разрешены только `pc_status`, `list_shared_files`, `read_shared_text`; `-EnableApps` добавляет единственное действие `open_notepad`.
-
-## Подключить ChatGPT без VDS
-
-1. В [Platform Tunnels](https://platform.openai.com/settings/organization/tunnels) создайте отдельный **приватный** туннель для Asus; добавьте целевой ChatGPT workspace. Используйте отдельный Restricted Runtime API Key с Tunnels Read + Use. **Ни один ключ не пересылайте в чат**.
-2. В обычном PowerShell на Asus:
-
-```powershell
-cd 'D:\AI\04_Workspaces\ARC-Lite-MVP'
 powershell -NoProfile -ExecutionPolicy Bypass -File .\start.ps1 -EnableApps
+codex mcp get arc_lite
 ```
 
-3. Введите только Tunnel ID, затем Runtime API Key в скрытом локальном поле. Скрипт создаёт профиль `arc-lite-asus` с локальным MCP stdio-командным запуском, исполняет `tunnel-client doctor --explain`, затем запускает туннель. Ключ передаётся дочерним процессам только через переменную окружения и не сохраняется в профиле или GitHub.
-4. Когда `doctor` успешен и клиент запущен, откройте **ChatGPT → Plugins → + → Add custom MCP server → Connection: Tunnel** и укажите этот Tunnel ID. Создайте отдельный приватный плагин ARC Lite (старый ARC Hub OAuth-плагин не годится, потому что указывает на VDS).
-5. В ChatGPT вызовите `pc_status`, затем `open_notepad` c уникальным `request_id`. Проверьте окно Блокнота на Asus и результат инструмента. Без успешного вызова **из ChatGPT** проект нельзя считать полноценно подключённым.
-6. Остановка: Ctrl+C в терминале туннеля. Автозапуск сознательно не добавлен до живой проверки.
+Второй запуск идемпотентен. Для изменения прав после установки используйте `-Reinstall`, например без `-EnableApps` для режима только чтения.
 
-## Ограничения безопасности
+## Подключение к ChatGPT Desktop
 
-* По умолчанию у агента **нет** PowerShell, мыши, клавиатуры, снимков экрана, записи или удаления файлов, произвольного запуска программ и доступа ко всему диску.
-* Файлы можно читать только из `%LOCALAPPDATA%\ARC-Lite\shared`; путь проверяется после разрешения ссылок, чтение ограничено 64 КиБ.
-* Опция `-EnableApps` разрешает только Notepad без аргументов. Повтор одного `request_id` не создаёт второй процесс в рамках текущей сессии агента.
-* Токены не логируются, по stdio обрабатывается только MCP JSON-RPC, не открывается TCP-порт.
-* Remote Desktop Commander не удалять, пока не пройдут: ChatGPT → pc_status → open_notepad → повтор после перезапуска.
-* Используйте только доверенный официальный `tunnel-client.exe`; установленный локальный бинарник не обновляется автоматически.
+1. Перезапустите ChatGPT Desktop (после регистрации локального MCP).
+2. Откройте **Settings → MCP servers** и проверьте `arc_lite` (тип **STDIO**, enabled), либо нажмите **Restart** в настройках сервера.
+3. Создайте **новый локальный** чат, не облачный Work-thread и не веб-страницу.
+4. Введите `/mcp` для просмотра доступных серверов.
+5. Попросите: **«Вызови локальный инструмент arc_lite pc_status и покажи имя Asus»**.
+6. Потом: **«Используй arc_lite open_notepad с новым request_id и открой Блокнот на этом компьютере»**.
+7. Проверьте в Windows, что появилось окно, а в чате — ответ вызова инструмента.
 
-## Официальная документация
+Если сервер не отображается, сначала проверьте `codex mcp get arc_lite`, перезапустите настольный клиент, убедитесь, что выбрана локальная сессия и Python доступен по указанному абсолютному пути.
 
-- [OpenAI Secure MCP Tunnel](https://developers.openai.com/api/docs/guides/secure-mcp-tunnels)
-- [Platform Tunnels](https://platform.openai.com/settings/organization/tunnels)
+## Текущие инструменты
 
-Основная цель: сначала одно гарантированно рабочее действие из ChatGPT, и только затем расширение функций.
+| MCP tool | Назначение |
+|---|---|
+| `pc_status` | статус и имя компьютера |
+| `list_shared_files` | перечислить выделенную папку |
+| `read_shared_text` | прочитать UTF-8 файл до 64 КиБ внутри выделенной папки |
+| `open_notepad` | открыть Блокнот; только если установлен с `-EnableApps` |
+
+Папка `%LOCALAPPDATA%\ARC-Lite\shared` предназначена для файлов, которые разрешено видеть агенту. За пределы разрешённого каталога переход запрещён, включая `..\` и ссылки.
+
+## Ограничения и безопасность
+
+По умолчанию запрещены PowerShell, произвольный запуск программ, снимки экрана, ввод мышью/клавиатурой, запись, удаление файлов. Разрешение `-EnableApps` добавляет только Блокнот. Вызов `open_notepad` принимает `request_id` для устранения повторов в текущем процессе.
+
+Прежде чем добавлять остальные функции, надо провести проверку: ChatGPT Desktop → `pc_status` → `open_notepad` → перезапуск ChatGPT Desktop → повтор. **Не удаляйте действующий Desktop Commander**, пока эта цепочка не заработает.
+
+Удаление только нашей регистрации, не файлов: `codex mcp remove arc_lite`.
+
+Отдельное примечание: ранее существовавший локальный плагин `ai-remote-commander-local` находился в личном marketplace со статусом **not installed**; его файлы и настройки не менялись.

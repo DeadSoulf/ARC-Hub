@@ -16,7 +16,7 @@ import socket
 import subprocess
 import sys
 
-VERSION = "0.1.0"
+VERSION = "0.2.0-full"
 MAX_REQUEST = 65536
 MAX_TEXT = 65536
 REQUEST_ID = re.compile(r"^[a-zA-Z0-9_-]{8,64}$")
@@ -134,10 +134,69 @@ class Agent:
             params = request.get("params")
             if not isinstance(params, dict):
                 raise ValueError("Invalid tools/call")
-            output = self.call(params.get("name"), params.get("arguments") or {})
+            name = params.get("name")
+            output = self.call(name, params.get("arguments") or {})
+            if name == "capture_screen":
+                return {"content": [{"type": "image", "mimeType": "image/png",
+                                     "data": output["image"]}]}
             return {"content": [{"type": "text", "text": json.dumps(output, ensure_ascii=False)}]}
         raise LookupError("Unknown MCP method")
 
+
+
+
+def fixed_drive_roots():
+    """Return only connected, fixed Windows drives (not network or USB removable)."""
+    if os.name != "nt":
+        return [Path.home()]
+    import ctypes
+    import string
+    drive_type = ctypes.windll.kernel32.GetDriveTypeW
+    drive_type.argtypes = [ctypes.c_wchar_p]
+    drive_type.restype = ctypes.c_uint
+    roots = []
+    for letter in string.ascii_uppercase:
+        path = Path(letter + ":\\")
+        if path.exists() and drive_type(str(path)) == 3:  # DRIVE_FIXED
+            roots.append(path)
+    return roots or [Path.home()]
+
+
+class FullAccessAgent(Agent):
+    """Single-process stdio wrapper around the existing Windows tools.
+
+    Uses the signed-in user's own permissions and only explicit local MCP calls.
+    No TCP, VDS, OAuth, tunnel, install service, or privilege escalation.
+    """
+
+    def __init__(self, shared: Path, roots=None):
+        if os.name != "nt":
+            raise RuntimeError("Full access is supported on Windows only")
+        super().__init__(shared, enable_apps=False)
+        modules = Path(__file__).resolve().parent / "windows_full"
+        if not (modules / "arc_full_ops.py").is_file():
+            raise FileNotFoundError("Full backend is missing: windows_full/arc_full_ops.py")
+        if str(modules) not in sys.path:
+            sys.path.insert(0, str(modules))
+        # GitHub checkout uses the existing Windows GUI library. The local Asus
+        # workspace has its slim stdio-only copy inside windows_full instead.
+        fallback = Path(__file__).resolve().parent.parent / "windows"
+        if not (modules / "arc_local.py").is_file() and fallback.is_dir():
+            sys.path.append(str(fallback))
+        from arc_full_ops import FullAgent
+        chosen = roots if roots else fixed_drive_roots()
+        self.roots = [Path(root).expanduser().resolve(strict=True) for root in chosen]
+        self.backend = FullAgent(self.roots, screen=True, apps=True, user_input=True,
+                                 write=True, shell=True)
+
+    def tools(self):
+        basic = super().tools()
+        return basic + self.backend.tools()
+
+    def call(self, name, args):
+        if name in ("pc_status", "list_shared_files", "read_shared_text"):
+            return super().call(name, args)
+        return self.backend.call(name, args)
 
 def serve(agent):
     for wire in sys.stdin.buffer:
@@ -167,15 +226,25 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     default_shared = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "ARC-Lite" / "shared"
     parser.add_argument("--shared", type=Path, default=default_shared)
-    parser.add_argument("--enable-apps", action="store_true")
+    parser.add_argument("--enable-apps", action="store_true",
+                        help="Permit the limited Notepad action in safe mode")
+    parser.add_argument("--full-access", action="store_true",
+                        help="Enable Windows desktop, files, processes and PowerShell (current user)")
+    parser.add_argument("--allow-root", action="append", type=Path,
+                        help="Limit full-access file operations to this folder; repeat as needed")
     parser.add_argument("--self-test", action="store_true")
     args = parser.parse_args()
-    agent = Agent(args.shared, enable_apps=args.enable_apps)
+    agent = (FullAccessAgent(args.shared, roots=args.allow_root)
+             if args.full_access else Agent(args.shared, enable_apps=args.enable_apps))
     if args.self_test:
         assert agent.call("pc_status", {})["online"] is True
         names = {tool["name"] for tool in agent.tools()}
-        assert ("open_notepad" in names) == args.enable_apps
+        assert ("open_notepad" in names) == (args.enable_apps or args.full_access)
+        assert ("run_command" in names) == args.full_access
+        assert ("capture_screen" in names) == args.full_access
         print("ARC_LITE_SELF_TEST_OK tools=" + ",".join(sorted(names)))
+        if args.full_access:
+            print("ARC_LITE_FULL_ACCESS_READY; roots=" + ",".join(map(str, agent.roots)))
         return
     serve(agent)
 

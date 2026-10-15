@@ -30,8 +30,15 @@ if ($Preflight) {
     return
 }
 
-& $Codex mcp get $Name 2>$null | Out-Null
-$Installed = ($LASTEXITCODE -eq 0)
+$Installed = $false
+try {
+    $null = & $Codex mcp get $Name 2>&1
+    $Installed = ($LASTEXITCODE -eq 0)
+}
+catch {
+    # A missing local MCP is normal on first installation.
+    $Installed = $false
+}
 if ($Installed -and -not $Reinstall) {
     Write-Host 'ARC_LITE_ALREADY_REGISTERED. To change permissions, run with -Reinstall.'
     & $Codex mcp get $Name

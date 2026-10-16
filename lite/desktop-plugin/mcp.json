@@ -1,0 +1,15 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+  "mcpServers": {
+    "arc_lite_desktop": {
+      "type": "stdio",
+      "command": "C:\\Users\\TexNik\\AppData\\Local\\Programs\\Python\\Python313\\python.exe",
+      "args": [
+        "-u",
+        "${PLUGIN_ROOT}/server/arc_lite.py",
+        "--full-access"
+      ],
+      "cwd": "${PLUGIN_ROOT}/server"
+    }
+  }
+}

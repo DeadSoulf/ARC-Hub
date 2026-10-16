@@ -1,0 +1,30 @@
+name: ARC Lite Windows smoke
+on:
+  push:
+    branches: [main, feature/arc-lite-direct-20261015]
+    paths: ['lite/**', '.github/workflows/arc-lite-ci.yml']
+  pull_request:
+    paths: ['lite/**', '.github/workflows/arc-lite-ci.yml']
+
+jobs:
+  windows-lite:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Run agent tests
+        run: python -m unittest discover -s lite -p test_lite.py -v
+      - name: Test complete packaged local plugin (safe Windows smoke)
+        run: python -m unittest discover -s lite/desktop-plugin/tests -p test_plugin.py -v
+      - name: Check PowerShell syntax
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile('lite/start.ps1', [ref]$tokens, [ref]$errors) | Out-Null
+          if ($errors.Count -gt 0) {
+            $errors | ForEach-Object { Write-Error $_.Message }
+            exit 1
+          }

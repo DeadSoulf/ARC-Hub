@@ -1,0 +1,30 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "arc-lite",
+  "version": "0.3.2",
+  "description": "Local Windows control via MCP stdio or a robust CLI fallback, with application launches, files, PowerShell, windows, mouse/keyboard and screen.",
+  "author": {
+    "name": "DeadSoulf"
+  },
+  "skills": "./skills/",
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "displayName": "ARC Lite (локально)",
+        "shortDescription": "Управление ноутбуком Asus без серверов",
+        "longDescription": "Локальное управление Windows Asus через MCP или CLI при проблемах с отображением MCP-инструментов. Файлы, экран, приложения, процессы, PowerShell и ввод. Все действия выполняются от имени пользователя Windows. Опасные операции требуют подтверждения.",
+        "developerName": "DeadSoulf",
+        "category": "Productivity",
+        "capabilities": [
+          "Read",
+          "Write",
+          "Interactive"
+        ],
+        "defaultPrompt": [
+          "Покажи состояние моего Asus через ARC Lite.",
+          "Открой Калькулятор на Asus через ARC Lite и проверь, что окно появилось."
+        ]
+      }
+    }
+  }
+}

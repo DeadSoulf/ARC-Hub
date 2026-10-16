@@ -16,6 +16,8 @@ jobs:
           python-version: '3.13'
       - name: Run agent tests
         run: python -m unittest discover -s lite -p test_lite.py -v
+      - name: Test complete packaged local plugin (safe Windows smoke)
+        run: python -m unittest discover -s lite/desktop-plugin/tests -p test_plugin.py -v
       - name: Check PowerShell syntax
         shell: pwsh
         run: |
